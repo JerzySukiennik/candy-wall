@@ -112,7 +112,7 @@ export class Fx {
     }
     const visc = fill.viscosity ?? 0.4;
     const col = new THREE.Color(fill.color);
-    const mat = new THREE.MeshPhysicalMaterial({ color: col, roughness: 0.04, clearcoat: 1, clearcoatRoughness: 0.03, transparent: true, opacity: lerp(0.82, 0.97, visc), emissive: col, emissiveIntensity: 0.3 });
+    const mat = new THREE.MeshPhysicalMaterial({ color: col, roughness: 0.04, clearcoat: 1, clearcoatRoughness: 0.03, transparent: true, opacity: lerp(0.82, 0.97, visc), emissive: col, emissiveIntensity: 0.6 });
     const mesh = new THREE.Mesh(this.puddleGeo, mat);
     mesh.renderOrder = 3;
     mesh.scale.setScalar(0.001);
