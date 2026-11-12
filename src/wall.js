@@ -12,7 +12,7 @@ const _p = new THREE.Vector3();
 const _s = new THREE.Vector3(1, 1, 1);
 const _e = new THREE.Euler();
 const BIN = { w: 13.2, h: 17.6, d: 9.6, y: 5.6, innerW: 12.2, innerD: 8.4, fill: 13.6 };
-const SPOUT = { y: 5.3, z: 12.6 };
+const CHUTE = { topY: 8.8, topZ: 10.4, endY: 1.5, endZ: 29.8, w: 7.6 };
 
 function lodBuild(def, v) {
   setDetail(0.32);
@@ -53,7 +53,8 @@ export class Wall {
       const x = (col - (WALL.cols - 1) / 2) * WALL.cellW;
       const y = WALL.y0 + (WALL.rows - 1 - row) * WALL.cellH;
       const bin = { index: i, def, col, row, x, y, meshes: [], order: [], left: 0, total: 0, ready: false, lever: 0, leverT: 0 };
-      bin.spout = new THREE.Vector3(x, y + SPOUT.y, WALL.z + SPOUT.z);
+      bin.spout = new THREE.Vector3(x, y + CHUTE.endY, WALL.z + CHUTE.endZ);
+      bin.chuteTop = new THREE.Vector3(x, y + CHUTE.topY, WALL.z + CHUTE.topZ);
       this.bins.push(bin);
       this.queue.push(bin);
     });
@@ -132,14 +133,25 @@ export class Wall {
         const b = new THREE.BoxGeometry(BIN.w, BIN.h, BIN.d);
         b.translate(x, y + BIN.y + BIN.h / 2, z + BIN.d / 2 + 0.2);
         bins.push(b);
-        const s = new THREE.BoxGeometry(5.6, 3.4, 6.2);
-        s.translate(x, y + BIN.y + 1.7, z + BIN.d + 3.1);
-        spouts.push(s);
+        const len = Math.hypot(CHUTE.endZ - CHUTE.topZ, CHUTE.topY - CHUTE.endY);
+        const ang = Math.atan2(CHUTE.topY - CHUTE.endY, CHUTE.endZ - CHUTE.topZ);
+        const part = (w, h, d, ox, oy, oz) => {
+          const g = new THREE.BoxGeometry(w, h, d);
+          g.translate(ox, oy, oz);
+          g.rotateX(ang);
+          g.translate(x, y + (CHUTE.topY + CHUTE.endY) / 2, z + (CHUTE.topZ + CHUTE.endZ) / 2);
+          spouts.push(g);
+        };
+        part(CHUTE.w, 0.22, len, 0, -0.5, 0);
+        part(0.22, 2.6, len, -CHUTE.w / 2, 0.7, 0);
+        part(0.22, 2.6, len, CHUTE.w / 2, 0.7, 0);
+        part(CHUTE.w, 2.6, 0.22, 0, 0.7, len / 2);
+        part(CHUTE.w, 0.22, 5.2, 0, 2.0, len / 2 - 2.6);
       }
     const binMesh = new THREE.Mesh(mergeGeometries(bins), clearPlastic({ base: 0.015, edge: 0.2, shine: 0.35, side: THREE.FrontSide }));
     binMesh.renderOrder = 3;
     this.group.add(binMesh);
-    const spoutMesh = new THREE.Mesh(mergeGeometries(spouts), clearPlastic({ base: 0.03, edge: 0.3, shine: 0.5, side: THREE.FrontSide }));
+    const spoutMesh = new THREE.Mesh(mergeGeometries(spouts), clearPlastic({ base: 0.02, edge: 0.26, shine: 0.45, side: THREE.DoubleSide }));
     spoutMesh.renderOrder = 3.5;
     this.group.add(spoutMesh);
   }
@@ -162,7 +174,7 @@ export class Wall {
 
   placeLever(b) {
     _q.setFromEuler(_e.set(-0.5 + b.lever * 1.25, 0, 0));
-    _m.compose(_p.set(b.x + 3.5, b.y + BIN.y + 2.4, WALL.z + BIN.d + 3.6), _q, _s);
+    _m.compose(_p.set(b.x + CHUTE.w / 2 + 1.1, b.y + CHUTE.topY + 0.6, WALL.z + CHUTE.topZ + 1.6), _q, _s);
     this.levers.setMatrixAt(b.index, _m);
     this.levers.instanceMatrix.needsUpdate = true;
   }

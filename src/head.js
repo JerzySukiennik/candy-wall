@@ -513,7 +513,7 @@ export class Head {
   steam() {
     const side = Math.random() < 0.5 ? -1 : 1;
     this.point(side * 9.6, rand(-1, 1.5), 1.5, _v);
-    this.game.fx.puff(_v, { count: 1, spread: 0.5, vx: side * 26, vy: 18, jitter: 5, drag: 1.5, life: 1.2, size: 5.5, grow: 2.6, color: 0xffffff, alpha: 0.5 });
+    this.game.fx.puff(_v, { count: 1, spread: 0.4, vx: side * 13, vy: 24, jitter: 3, drag: 1.4, life: 0.95, size: 3.4, grow: 2.2, color: 0xffffff, alpha: 0.42 });
   }
 
   mist() {

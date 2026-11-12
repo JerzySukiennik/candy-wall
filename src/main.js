@@ -11,7 +11,7 @@ import { Head } from './head.js';
 import { Tools } from './tools.js';
 import { audio } from './audio.js';
 import { CANDIES, PACKS } from './candies/index.js';
-import { prepare } from './candy.js';
+import { buildMeshes, measureSet, prepare, wholeSet } from './candy.js';
 import { Tweens, clamp, damp, ease, lerp, rand, rayY, smooth } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -92,6 +92,9 @@ const ui = (game.ui = {
   },
 });
 
+const DROP = 6.2;
+const slides = [];
+
 function overviewRig() {
   const r = wall.overviewRig(camera.aspect, game.panX);
   game.panLimit = r.pan;
@@ -101,7 +104,7 @@ function overviewRig() {
 
 function focusRig(bin) {
   const p = camera.aspect < 0.85;
-  return { t: [bin.x, bin.y + (p ? 1 : 2), WALL.z + 13], w: p ? 33 : 50, h: p ? 52 : 44, elev: 30, fov: 28 };
+  return { t: [bin.x, bin.y - (p ? 2.5 : 1), WALL.z + 24], w: p ? 34 : 56, h: p ? 60 : 52, elev: 30, fov: 28 };
 }
 
 function dockOffset() {
@@ -110,7 +113,7 @@ function dockOffset() {
 
 function focusOffset(bin, cell) {
   const c = tray.cells[cell];
-  return V(bin.spout.x - c.x, bin.spout.y - 8.6 - (tray.home.y + tray.floorY + tray.depth), bin.spout.z - c.z);
+  return V(bin.spout.x - c.x, bin.spout.y - DROP - (tray.home.y + tray.floorY + tray.depth), bin.spout.z + 1.2 - c.z);
 }
 
 function cellStats() {
@@ -266,6 +269,10 @@ function pourStep(dt) {
     return;
   }
   const st = cellStats();
+  for (const sl of slides) {
+    st[sl.cell].count++;
+    st[sl.cell].vol += sl.prep.size.x * sl.prep.size.y * sl.prep.size.z * 0.5;
+  }
   if (cellFull(st[game.cell], bin)) {
     const next = pickCell(bin);
     if (next === game.cell || cellFull(st[next], bin)) {
@@ -276,13 +283,54 @@ function pourStep(dt) {
     pourAcc = -0.4;
     return;
   }
-  spawnIntoCell(bin.def, wall.takeOne(bin), game.cell, 8.2);
+  slideOut(bin, wall.takeOne(bin));
   pourRattle -= 1;
   if (pourRattle <= 0) {
     pourRattle = 3;
     const land = bin.def.sound && bin.def.sound.land;
     if (land === 'hard' || land === 'glass' || land === 'tiny' || land === 'choc') audio.play('pour_candy', { vol: 0.35, rate: rand(0.9, 1.2), gap: 0.2 });
   }
+}
+
+function slideOut(bin, variant) {
+  const prep = prepare(bin.def, Math.max(0, variant));
+  const set = wholeSet(prep);
+  const group = buildMeshes(set, (prep.wholeMeasure || (prep.wholeMeasure = measureSet(set))).center, { shadow: false });
+  group.matrixAutoUpdate = false;
+  tray.group.add(group);
+  const long = Math.max(prep.size.x, prep.size.z) > 6.4;
+  const q = new THREE.Quaternion();
+  if (long) q.setFromEuler(new THREE.Euler(0.42, prep.size.x >= prep.size.z ? Math.PI / 2 : 0, 0, 'YXZ'));
+  else q.setFromEuler(new THREE.Euler(rand(6.28), rand(6.28), rand(6.28)));
+  const lift = Math.min(prep.size.x, prep.size.y, prep.size.z) * 0.5 + 0.2;
+  const jx = long ? 0 : rand(-1, 1) * Math.max(0, 3.2 - Math.max(prep.size.x, prep.size.z) * 0.5);
+  const from = V(bin.chuteTop.x + jx, bin.chuteTop.y + lift, bin.chuteTop.z + 1.2);
+  const to = V(bin.spout.x + jx * 0.6, bin.spout.y + lift + 0.4, bin.spout.z - (long ? Math.max(prep.size.x, prep.size.z) * 0.32 : 0.6));
+  slides.push({ prep, set, group, q, from, to, t: 0, dur: 0.3, spin: V(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(long ? 0 : 7), cell: game.cell });
+}
+
+const _sq = new THREE.Quaternion();
+function stepSlides(dt) {
+  for (let i = slides.length - 1; i >= 0; i--) {
+    const s = slides[i];
+    s.t += dt;
+    const k = Math.min(1, s.t / s.dur);
+    const e = k * k;
+    const pos = _t.copy(s.from).lerp(s.to, e).sub(trayOff);
+    if (s.spin.lengthSq() > 0) {
+      _sq.setFromAxisAngle(_m.copy(s.spin).normalize(), s.spin.length() * dt);
+      s.q.premultiply(_sq);
+    }
+    s.group.matrix.compose(pos, s.q, V(1, 1, 1));
+    s.group.matrixWorldNeedsUpdate = true;
+    if (k >= 1) {
+      tray.group.remove(s.group);
+      slides.splice(i, 1);
+      const dir = _m.copy(s.to).sub(s.from).multiplyScalar((2 / s.dur) * 0.2);
+      pieces.spawn(s.set, { pos: pos.clone(), quat: s.q, vel: V(dir.x, dir.y - 12, dir.z), spin: { x: s.spin.x * 0.6, y: s.spin.y * 0.6, z: s.spin.z * 0.6 }, zone: 'tray' });
+    }
+  }
+  return slides.length > 0;
 }
 
 function spawnIntoCell(def, variant, cellIndex, drop = 8) {
@@ -746,6 +794,7 @@ function frame(now) {
     pourStep(dt);
     active = true;
   }
+  if (slides.length && stepSlides(dt)) active = true;
   let awake = tools.state === 'hold';
   if (!awake) for (const p of pieces.list) if (!p.body.isSleeping()) {
     awake = true;
