@@ -4,6 +4,8 @@ import { GROUP, RAPIER } from './physics.js';
 import { buildMeshes, disposeMeshes, measureSet, setParts, splitSet, wholeSet } from './candy.js';
 import { GRP_CAP, hullPoints } from './lib/cut.js';
 import { clamp, lerp, rand } from './util.js';
+import { wholeShape } from './shape.js';
+import { IS_TOUCH } from './config.js';
 
 const _p = new THREE.Vector3();
 const _q = new THREE.Quaternion();
@@ -14,7 +16,8 @@ const _m = new THREE.Matrix4();
 const _d = new THREE.Matrix4();
 const _one = new THREE.Vector3(1, 1, 1);
 const UP = new THREE.Vector3(0, 1, 0);
-const MAX_PIECES = 230;
+const MAX_PIECES = IS_TOUCH ? 300 : 560;
+const _w = new THREE.Matrix4();
 
 function deform(out, a, s, ext) {
   const b = 1 / Math.sqrt(Math.max(0.2, s));
@@ -56,9 +59,15 @@ export class Piece {
     this.prevV = new THREE.Vector3();
     this.pos = new THREE.Vector3().copy(o.pos);
     this.quat = new THREE.Quaternion().copy(o.quat || _q.identity());
-    this.group = buildMeshes(set, m.center);
-    this.group.matrixAutoUpdate = false;
-    this.group.userData.piece = this;
+    this.batched = !!set.whole;
+    this.matrix = new THREE.Matrix4();
+    this.slot = -1;
+    this.group = null;
+    if (!this.batched) {
+      this.group = buildMeshes(set, m.center);
+      this.group.matrixAutoUpdate = false;
+      this.group.userData.piece = this;
+    }
     const feel = prep.feel;
     const bd = RAPIER.RigidBodyDesc.dynamic()
       .setTranslation(this.pos.x, this.pos.y, this.pos.z)
@@ -69,10 +78,12 @@ export class Piece {
     if (o.vel) bd.setLinvel(o.vel.x, o.vel.y, o.vel.z);
     if (o.spin) bd.setAngvel(o.spin);
     this.body = sys.physics.world.createRigidBody(bd);
-    let pts;
-    if (set.whole) pts = prep.wholeHull || (prep.wholeHull = this.hull());
-    else pts = this.hull();
-    let cd = pts.length >= 12 ? RAPIER.ColliderDesc.convexHull(pts) : null;
+    let cd = null;
+    if (set.whole) cd = wholeShape(prep, RAPIER).make();
+    else {
+      const pts = this.hull();
+      cd = pts.length >= 12 ? RAPIER.ColliderDesc.convexHull(pts) : null;
+    }
     if (!cd) cd = RAPIER.ColliderDesc.cuboid(Math.max(0.08, m.size[0] / 2), Math.max(0.08, m.size[1] / 2), Math.max(0.08, m.size[2] / 2));
     cd.setMass(this.mass)
       .setFriction(lerp(0.45, 1.3, clamp(feel.sticky + this.soft * 0.5, 0, 1)))
@@ -139,8 +150,13 @@ export class Piece {
     this.quat.set(r.x, r.y, r.z, r.w);
     _m.compose(this.pos, this.quat, _one);
     if (squashing) _m.multiply(deform(_d, this.sAxis, this.s, this.sExt));
-    this.group.matrix.copy(_m);
-    this.group.matrixWorldNeedsUpdate = true;
+    if (this.batched) {
+      this.matrix.copy(_m);
+      if (this.batch) this.batch.dirty = true;
+    } else {
+      this.group.matrix.copy(_m);
+      this.group.matrixWorldNeedsUpdate = true;
+    }
     return moving || squashing;
   }
 
@@ -218,13 +234,106 @@ export class Pieces {
     this.physics = game.physics;
     this.list = [];
     this.moving = false;
+    this.batches = new Map();
+    this.max = MAX_PIECES;
   }
 
   spawn(set, o) {
     const p = new Piece(this, set, o);
     this.list.push(p);
-    this.parent(p);
+    if (p.batched) this.batchAdd(p);
+    else this.parent(p);
     return p;
+  }
+
+  batchFor(prep) {
+    let b = this.batches.get(prep);
+    if (b) return b;
+    b = { prep, pieces: [], meshes: [], cap: 0, dirty: true };
+    this.batches.set(prep, b);
+    this.batchGrow(b, 24);
+    return b;
+  }
+
+  batchGrow(b, cap) {
+    const scene = this.game.stage.scene;
+    for (const im of b.meshes) scene.remove(im);
+    b.meshes = b.prep.layers.map((l) => {
+      const im = new THREE.InstancedMesh(l.geometry, l.material, cap);
+      im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      im.frustumCulled = false;
+      im.castShadow = true;
+      im.receiveShadow = true;
+      im.count = 0;
+      if (l.material.transparent) im.renderOrder = 2;
+      scene.add(im);
+      return im;
+    });
+    b.cap = cap;
+    b.dirty = true;
+  }
+
+  batchAdd(p) {
+    const b = this.batchFor(p.prep);
+    if (b.pieces.length >= b.cap) this.batchGrow(b, b.cap * 2);
+    p.batch = b;
+    p.slot = b.pieces.length;
+    b.pieces.push(p);
+    b.dirty = true;
+  }
+
+  batchRemove(p) {
+    const b = p.batch;
+    if (!b) return;
+    const last = b.pieces.pop();
+    if (last !== p) {
+      b.pieces[p.slot] = last;
+      last.slot = p.slot;
+    }
+    p.batch = null;
+    p.slot = -1;
+    b.dirty = true;
+  }
+
+  trayMoved() {
+    for (const b of this.batches.values()) b.dirty = true;
+  }
+
+  flush() {
+    const tm = this.game.tray.matrix;
+    for (const b of this.batches.values()) {
+      if (!b.dirty) continue;
+      b.dirty = false;
+      const n = b.pieces.length;
+      const c0 = b.prep.wholeMeasure ? b.prep.wholeMeasure.center : [0, 0, 0];
+      for (let i = 0; i < n; i++) {
+        const p = b.pieces[i];
+        if (p.zone === 'tray') _w.multiplyMatrices(tm, p.matrix);
+        else _w.copy(p.matrix);
+        _w.multiply(_d.makeTranslation(-c0[0], -c0[1], -c0[2]));
+        for (const im of b.meshes) im.setMatrixAt(i, _w);
+      }
+      for (const im of b.meshes) {
+        im.count = n;
+        im.instanceMatrix.needsUpdate = true;
+      }
+    }
+  }
+
+  detach(p) {
+    if (p.dead) return null;
+    p.dead = true;
+    this.physics.unregister(p.collider);
+    this.physics.world.removeRigidBody(p.body);
+    const i = this.list.indexOf(p);
+    if (i >= 0) this.list.splice(i, 1);
+    let g = p.group;
+    if (p.batched) {
+      this.batchRemove(p);
+      g = buildMeshes(p.set, p.center);
+      g.matrixAutoUpdate = false;
+    } else if (g.parent) g.parent.remove(g);
+    return g;
   }
 
   spawnWhole(prep, o) {
@@ -232,7 +341,11 @@ export class Pieces {
   }
 
   parent(p) {
-    const target = p.zone === 'tray' ? this.game.tray.group : this.game.stage.scene;
+    if (p.batched) {
+      if (p.batch) p.batch.dirty = true;
+      return;
+    }
+    const target = p.zone === 'tray' ? this.game.tray.inner : this.game.stage.scene;
     if (p.group.parent !== target) target.add(p.group);
   }
 
@@ -241,8 +354,11 @@ export class Pieces {
     p.dead = true;
     this.physics.unregister(p.collider);
     this.physics.world.removeRigidBody(p.body);
-    if (p.group.parent) p.group.parent.remove(p.group);
-    disposeMeshes(p.group);
+    if (p.batched) this.batchRemove(p);
+    else {
+      if (p.group.parent) p.group.parent.remove(p.group);
+      disposeMeshes(p.group);
+    }
     const i = this.list.indexOf(p);
     if (i >= 0) this.list.splice(i, 1);
   }
@@ -305,6 +421,7 @@ export class Pieces {
       }
       if (p.pos.y < -40) this.remove(p);
     }
+    this.flush();
     this.moving = moving;
     return moving;
   }
@@ -396,7 +513,7 @@ export class Pieces {
     const pos = p.pos.clone();
     const quat = p.quat.clone();
     const c0 = new THREE.Vector3().fromArray(p.center);
-    const room = MAX_PIECES - this.list.length;
+    const room = this.max - this.list.length;
     sets.sort((a, b) => measureSet(b).volume - measureSet(a).volume);
     let made = 0;
     for (const s of sets) {

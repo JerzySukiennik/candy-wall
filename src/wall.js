@@ -1,7 +1,7 @@
-// Candy Wall: the backlit wall of acrylic dispensers (instanced candy piles, levers, labels) and pouring into the tray.
+// Candy Wall: the wall of stacked acrylic bins with hinged slanted lids: candy piles (instanced, two detail levels, baked or loose), labels, scooping out and the focus veil.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { WALL } from './config.js';
+import { BIN, BINBOX, IS_TOUCH, WALL } from './config.js';
 import { ensureRest, setDetail } from './lib/geo.js';
 import { clearPlastic } from './tray.js';
 import { clamp, damp, hashStr, rng } from './util.js';
@@ -11,11 +11,19 @@ const _q = new THREE.Quaternion();
 const _p = new THREE.Vector3();
 const _s = new THREE.Vector3(1, 1, 1);
 const _e = new THREE.Euler();
-const BIN = { w: 13.2, h: 17.6, d: 9.6, y: 5.6, innerW: 12.2, innerD: 8.4, fill: 13.6 };
-const CHUTE = { topY: 8.8, topZ: 10.4, endY: 1.5, endZ: 29.8, w: 7.6 };
+const _c = new THREE.Color();
+const FAR_BUDGET = 26000;
+const NEAR_BUDGET = IS_TOUCH ? 240000 : 620000;
+const LID_OPEN = 1.32;
 
-function lodBuild(def, v) {
-  setDetail(0.32);
+function trisOf(layers) {
+  let n = 0;
+  for (const l of layers) n += l.geometry.index ? l.geometry.index.count / 3 : l.geometry.attributes.position.count / 3;
+  return n;
+}
+
+function lodBuild(def, v, detail) {
+  setDetail(detail);
   let built;
   try {
     built = def.build(v);
@@ -34,31 +42,109 @@ function lodBuild(def, v) {
   return { layers, size: box.getSize(new THREE.Vector3()) };
 }
 
+function loosePile(def, size, nv, tris) {
+  const W = BINBOX.w;
+  const D = BINBOX.d;
+  const FILL = BINBOX.fill;
+  const r = rng(hashStr(def.id));
+  const cell = 0.45;
+  const gw = Math.ceil(W / cell);
+  const gd = Math.ceil(D / cell) + 1;
+  const hm = new Float32Array(gw * gd);
+  const longest = Math.max(size.x, size.y, size.z);
+  const round = Math.min(size.x, size.y, size.z) / longest > 0.62;
+  const cap = clamp(Math.floor(FAR_BUDGET / Math.max(40, tris)), 6, 300);
+  const half = new THREE.Vector3(size.x / 2, size.y / 2, size.z / 2);
+  const rot = new THREE.Matrix4();
+  const poses = [];
+  let misses = 0;
+  for (let n = 0; n < cap; n++) {
+    let best = null;
+    for (let tries = 0; tries < 14; tries++) {
+      if (round) _e.set(r() * 6.283, r() * 6.283, r() * 6.283);
+      else {
+        const lim = longest > D * 0.9 ? 0.5 : Math.PI;
+        _e.set((r() - 0.5) * 0.7, (r() - 0.5) * 2 * lim + (r() < 0.5 ? 0 : Math.PI), (r() - 0.5) * 0.7);
+        if (longest > D * 0.9 && size.z > size.x) _e.y += Math.PI / 2;
+      }
+      _q.setFromEuler(_e);
+      rot.makeRotationFromQuaternion(_q);
+      const e = rot.elements;
+      const ex = Math.abs(e[0]) * half.x + Math.abs(e[4]) * half.y + Math.abs(e[8]) * half.z;
+      const ey = Math.abs(e[1]) * half.x + Math.abs(e[5]) * half.y + Math.abs(e[9]) * half.z;
+      const ez = Math.abs(e[2]) * half.x + Math.abs(e[6]) * half.y + Math.abs(e[10]) * half.z;
+      const fx = Math.min(ex * 0.8, W / 2 - 0.05);
+      const fz = Math.min(ez * 0.8, D / 2 - 0.05);
+      const px = (r() - 0.5) * 2 * Math.max(0, W / 2 - ex * 0.92);
+      const pz = (r() - 0.5) * 2 * Math.max(0, D / 2 - ez * 0.92);
+      const i0 = Math.max(0, Math.floor((px - fx + W / 2) / cell));
+      const i1 = Math.min(gw - 1, Math.floor((px + fx + W / 2) / cell));
+      const j0 = Math.max(0, Math.floor((pz - fz + D / 2) / cell));
+      const j1 = Math.min(gd - 1, Math.floor((pz + fz + D / 2) / cell));
+      const eh = ey * 0.76;
+      let y = eh;
+      for (let j = j0; j <= j1; j++)
+        for (let i = i0; i <= i1; i++) {
+          const dx = ((i + 0.5) * cell - W / 2 - px) / fx;
+          const dz = ((j + 0.5) * cell - D / 2 - pz) / fz;
+          const d2 = dx * dx + dz * dz;
+          if (d2 < 1) y = Math.max(y, hm[j * gw + i] + eh * Math.sqrt(1 - d2));
+        }
+      if (!best || y < best.y) best = { y, px, pz, ex: fx, ey: eh, ez: fz, q: _q.clone(), i0, i1, j0, j1 };
+    }
+    if (best.y + best.ey > FILL) {
+      if (++misses > 5) break;
+      continue;
+    }
+    for (let j = best.j0; j <= best.j1; j++)
+      for (let i = best.i0; i <= best.i1; i++) {
+        const dx = ((i + 0.5) * cell - W / 2 - best.px) / best.ex;
+        const dz = ((j + 0.5) * cell - D / 2 - best.pz) / best.ez;
+        const d2 = dx * dx + dz * dz;
+        if (d2 < 1) hm[j * gw + i] = Math.max(hm[j * gw + i], best.y + best.ey * Math.sqrt(1 - d2));
+      }
+    poses.push({ x: best.px, y: best.y, z: best.pz, q: best.q, v: Math.floor(r() * nv) % nv });
+  }
+  poses.sort((a, b) => a.y - b.y);
+  const top = poses.length ? poses[poses.length - 1].y : 1;
+  const out = { n: poses.length, p: [], q: [], v: [], ao: [], loose: true };
+  for (const p of poses) {
+    out.p.push(Math.round(p.x * 100), Math.round(p.y * 100), Math.round(p.z * 100));
+    out.q.push(Math.round(p.q.x * 10000), Math.round(p.q.y * 10000), Math.round(p.q.z * 10000), Math.round(p.q.w * 10000));
+    out.v.push(p.v);
+    const lit = Math.max(clamp((p.z + D / 2) / D, 0, 1) * 0.8, clamp(1 - (top - p.y) / 4, 0, 1));
+    out.ao.push(Math.round((0.45 + 0.55 * lit) * 255));
+  }
+  return out;
+}
+
 export class Wall {
   constructor(game, defs) {
     this.game = game;
     this.group = new THREE.Group();
-    this.defs = defs.slice(0, WALL.cols * WALL.rows);
+    this.defs = defs;
+    this.cols = Math.min(WALL.cols, defs.length);
+    this.rows = Math.ceil(defs.length / this.cols);
     this.bins = [];
-    this.width = WALL.cols * WALL.cellW;
-    this.height = WALL.rows * WALL.cellH;
+    this.width = this.cols * WALL.cellW;
+    this.height = this.rows * WALL.cellH;
     this.center = new THREE.Vector3(0, WALL.y0 + this.height / 2, WALL.z);
     this.queue = [];
-    this.active = null;
-    this.pourAcc = 0;
-    this.buildFrame();
+    this.focused = null;
     this.defs.forEach((def, i) => {
-      const col = i % WALL.cols;
-      const row = Math.floor(i / WALL.cols);
-      const x = (col - (WALL.cols - 1) / 2) * WALL.cellW;
-      const y = WALL.y0 + (WALL.rows - 1 - row) * WALL.cellH;
-      const bin = { index: i, def, col, row, x, y, meshes: [], order: [], left: 0, total: 0, ready: false, lever: 0, leverT: 0 };
-      bin.spout = new THREE.Vector3(x, y + CHUTE.endY, WALL.z + CHUTE.endZ);
-      bin.chuteTop = new THREE.Vector3(x, y + CHUTE.topY, WALL.z + CHUTE.topZ);
+      const col = i % this.cols;
+      const row = Math.floor(i / this.cols);
+      const x = (col - (this.cols - 1) / 2) * WALL.cellW;
+      const y = WALL.y0 + (this.rows - 1 - row) * WALL.cellH;
+      const bin = { index: i, def, col, row, x, y, sets: [], left: 0, total: 0, ready: false, lid: 0, lidT: 0, near: false };
+      bin.origin = new THREE.Vector3(x, y + BIN.y + 0.25, WALL.z + BIN.z0 + 0.3 + BINBOX.d / 2);
+      bin.hinge = new THREE.Vector3(x, y + BIN.y + BIN.h, WALL.z + BIN.z0 + BIN.hingeZ);
+      bin.mouth = new THREE.Vector3(x, y + BIN.y + BINBOX.fill, WALL.z + BIN.z0 + 9.5);
       this.bins.push(bin);
       this.queue.push(bin);
     });
-    this.buildLevers();
+    this.buildFrame();
+    this.buildLids();
     this.buildLabels();
     const vg = new THREE.BufferGeometry();
     vg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(16 * 3), 3));
@@ -71,42 +157,14 @@ export class Wall {
     this.group.add(this.veil);
   }
 
-  setFocus(bin) {
-    this.veilT = bin ? 0.74 : 0;
-    if (!bin) return;
-    const z = WALL.z + BIN.d + 0.7;
-    const X0 = -this.width / 2 - 6;
-    const X1 = this.width / 2 + 6;
-    const Y0 = WALL.y0 - 30;
-    const Y1 = WALL.y0 + this.height + 6;
-    const x0 = bin.x - WALL.cellW / 2 + 0.3;
-    const x1 = bin.x + WALL.cellW / 2 - 0.3;
-    const y0 = bin.y - 0.2;
-    const y1 = bin.y + WALL.cellH - 0.2;
-    const quads = [
-      [X0, Y0, x0, Y1],
-      [x1, Y0, X1, Y1],
-      [x0, y1, x1, Y1],
-      [x0, Y0, x1, y0],
-    ];
-    const p = this.veil.geometry.attributes.position;
-    quads.forEach((q, i) => {
-      p.setXYZ(i * 4, q[0], q[1], z);
-      p.setXYZ(i * 4 + 1, q[2], q[1], z);
-      p.setXYZ(i * 4 + 2, q[2], q[3], z);
-      p.setXYZ(i * 4 + 3, q[0], q[3], z);
-    });
-    p.needsUpdate = true;
-  }
-
   buildFrame() {
-    const { cols, rows, cellW, cellH, z, y0 } = WALL;
+    const { cellH, z, y0 } = WALL;
     const W = this.width;
     const H = this.height;
-    const glow = new THREE.Mesh(new THREE.PlaneGeometry(W + 4, H + 2), new THREE.MeshBasicMaterial({ map: glowTexture(), color: 0x6f7686 }));
-    glow.position.set(0, y0 + H / 2, z - 0.4);
-    this.group.add(glow);
-    this.glow = glow;
+    const backing = new THREE.Mesh(new THREE.PlaneGeometry(W + 4, H + 2), new THREE.MeshStandardMaterial({ color: 0x0b0c10, roughness: 0.85, metalness: 0 }));
+    backing.position.set(0, y0 + H / 2, z - 0.2);
+    backing.receiveShadow = true;
+    this.group.add(backing);
     const dark = new THREE.MeshStandardMaterial({ color: 0x08080a, roughness: 0.55, metalness: 0.15, envMapIntensity: 0.35 });
     const frame = [];
     const box = (w, h, d, x, y, zz) => {
@@ -114,69 +172,86 @@ export class Wall {
       g.translate(x, y, zz);
       frame.push(g);
     };
-    for (let r = 0; r <= rows; r++) box(W + 3, r === rows ? 1.2 : 4.6, 11, 0, y0 + r * cellH + (r === rows ? 0.2 : 2.3), z + 5.3);
-    box(1.6, H + 1.4, 11.4, -W / 2 - 1.2, y0 + H / 2 + 0.3, z + 5.3);
-    box(1.6, H + 1.4, 11.4, W / 2 + 1.2, y0 + H / 2 + 0.3, z + 5.3);
-    for (let c = 1; c < cols; c++) box(0.5, H, 0.6, (c - cols / 2) * cellW, y0 + H / 2, z + 0.4);
+    for (let r = 0; r <= this.rows; r++) box(W + 3, r === this.rows ? 1 : 2.5, 13.6, 0, y0 + r * cellH + (r === this.rows ? 0.3 : 1.35), z + 6.8);
+    box(1.6, H + 1.4, 14, -W / 2 - 1.2, y0 + H / 2 + 0.3, z + 7);
+    box(1.6, H + 1.4, 14, W / 2 + 1.2, y0 + H / 2 + 0.3, z + 7);
     box(W + 6, 2.4, WALL.counterD, 0, WALL.counterY - 1.2, z + WALL.counterD / 2 - 1);
     box(W + 6, WALL.counterY + 40, 2, 0, WALL.counterY / 2 - 20 - 1.2, z + WALL.counterD - 2);
     const frameMesh = new THREE.Mesh(mergeGeometries(frame), dark);
     frameMesh.receiveShadow = true;
     this.group.add(frameMesh);
 
-    const bins = [];
-    const spouts = [];
-    for (let r = 0; r < rows; r++)
-      for (let c = 0; c < cols; c++) {
-        const x = (c - (cols - 1) / 2) * cellW;
-        const y = y0 + r * cellH;
-        const b = new THREE.BoxGeometry(BIN.w, BIN.h, BIN.d);
-        b.translate(x, y + BIN.y + BIN.h / 2, z + BIN.d / 2 + 0.2);
-        bins.push(b);
-        const len = Math.hypot(CHUTE.endZ - CHUTE.topZ, CHUTE.topY - CHUTE.endY);
-        const ang = Math.atan2(CHUTE.topY - CHUTE.endY, CHUTE.endZ - CHUTE.topZ);
-        const part = (w, h, d, ox, oy, oz) => {
-          const g = new THREE.BoxGeometry(w, h, d);
-          g.translate(ox, oy, oz);
-          g.rotateX(ang);
-          g.translate(x, y + (CHUTE.topY + CHUTE.endY) / 2, z + (CHUTE.topZ + CHUTE.endZ) / 2);
-          spouts.push(g);
-        };
-        part(CHUTE.w, 0.22, len, 0, -0.5, 0);
-        part(0.22, 2.6, len, -CHUTE.w / 2, 0.7, 0);
-        part(0.22, 2.6, len, CHUTE.w / 2, 0.7, 0);
-        part(CHUTE.w, 2.6, 0.22, 0, 0.7, len / 2);
-        part(CHUTE.w, 0.22, 5.2, 0, 2.0, len / 2 - 2.6);
+    const pos = [];
+    const lines = [];
+    const rods = [];
+    const hw = BIN.w / 2;
+    const quad = (a, b, c, d) => pos.push(...a, ...b, ...c, ...a, ...c, ...d);
+    for (const bin of this.bins) {
+      const x0 = bin.x - hw;
+      const x1 = bin.x + hw;
+      const yb = bin.y + BIN.y;
+      const zb = z + BIN.z0;
+      const A = [0, yb, zb];
+      const B = [0, yb + BIN.h, zb];
+      const C = [0, yb + BIN.h, zb + BIN.hingeZ];
+      const N = [0, yb + BIN.noseY, zb + BIN.noseZ];
+      const F = [0, yb, zb + BIN.frontZ];
+      const at = (p, x) => [x, p[1], p[2]];
+      quad(at(A, x0), at(A, x1), at(F, x1), at(F, x0));
+      quad(at(A, x0), at(B, x0), at(B, x1), at(A, x1));
+      quad(at(B, x0), at(C, x0), at(C, x1), at(B, x1));
+      quad(at(F, x0), at(F, x1), at(N, x1), at(N, x0));
+      for (const x of [x0, x1]) {
+        pos.push(...at(A, x), ...at(B, x), ...at(C, x), ...at(A, x), ...at(C, x), ...at(N, x), ...at(A, x), ...at(N, x), ...at(F, x));
+        lines.push(...at(C, x), ...at(N, x), ...at(N, x), ...at(F, x), ...at(B, x), ...at(C, x));
       }
-    const binMesh = new THREE.Mesh(mergeGeometries(bins), clearPlastic({ base: 0.015, edge: 0.2, shine: 0.35, side: THREE.FrontSide }));
+      lines.push(...at(N, x0), ...at(N, x1), ...at(F, x0), ...at(F, x1));
+      const rod = new THREE.CylinderGeometry(0.22, 0.22, BIN.w + 0.8, 10);
+      rod.rotateZ(Math.PI / 2);
+      rod.translate(bin.x, C[1] + 0.05, C[2]);
+      rods.push(rod);
+    }
+    const bg = new THREE.BufferGeometry();
+    bg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    bg.computeVertexNormals();
+    const binMesh = new THREE.Mesh(bg, clearPlastic({ base: 0.012, edge: 0.16, shine: 0.14, roughness: 0.16, side: THREE.DoubleSide }));
     binMesh.renderOrder = 3;
     this.group.add(binMesh);
-    const spoutMesh = new THREE.Mesh(mergeGeometries(spouts), clearPlastic({ base: 0.02, edge: 0.26, shine: 0.45, side: THREE.DoubleSide }));
-    spoutMesh.renderOrder = 3.5;
-    this.group.add(spoutMesh);
+    const lg = new THREE.BufferGeometry();
+    lg.setAttribute('position', new THREE.Float32BufferAttribute(lines, 3));
+    const edges = new THREE.LineSegments(lg, new THREE.LineBasicMaterial({ color: 0xcfdcff, transparent: true, opacity: 0.34, blending: THREE.AdditiveBlending, depthWrite: false }));
+    edges.renderOrder = 3.2;
+    this.group.add(edges);
+    const rodMesh = new THREE.Mesh(mergeGeometries(rods), new THREE.MeshStandardMaterial({ color: 0xdfe3ea, roughness: 0.18, metalness: 1 }));
+    this.group.add(rodMesh);
   }
 
-  buildLevers() {
-    const chrome = new THREE.MeshStandardMaterial({ color: 0xdfe3ea, roughness: 0.18, metalness: 1 });
-    const arm = new THREE.CylinderGeometry(0.28, 0.28, 4.4, 10);
-    arm.rotateX(Math.PI / 2);
-    arm.translate(0, 0, 2.2);
-    const knob = new THREE.SphereGeometry(0.85, 14, 10);
-    knob.translate(0, 0, 4.6);
-    const hub = new THREE.CylinderGeometry(0.7, 0.7, 0.8, 12);
-    hub.rotateZ(Math.PI / 2);
-    const g = mergeGeometries([arm, knob, hub]);
-    this.levers = new THREE.InstancedMesh(g, chrome, this.bins.length);
-    this.levers.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    for (const b of this.bins) this.placeLever(b);
-    this.group.add(this.levers);
+  buildLids() {
+    const len = Math.hypot(BIN.noseZ - BIN.hingeZ, BIN.h - BIN.noseY);
+    const dy = (BIN.noseY - BIN.h) / len;
+    const dz = (BIN.noseZ - BIN.hingeZ) / len;
+    const hw = BIN.w / 2;
+    const p = [];
+    const quad = (a, b, c, d) => p.push(...a, ...b, ...c, ...a, ...c, ...d);
+    const tip = [0, dy * len, dz * len];
+    quad([-hw, 0, 0], [hw, 0, 0], [hw, tip[1], tip[2]], [-hw, tip[1], tip[2]]);
+    quad([-hw, tip[1], tip[2]], [hw, tip[1], tip[2]], [hw, tip[1] - 0.9, tip[2] + 0.5], [-hw, tip[1] - 0.9, tip[2] + 0.5]);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(p, 3));
+    g.computeVertexNormals();
+    this.lids = new THREE.InstancedMesh(g, clearPlastic({ base: 0.02, edge: 0.22, shine: 0.16, roughness: 0.16, side: THREE.DoubleSide }), this.bins.length);
+    this.lids.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.lids.renderOrder = 3.6;
+    this.lids.frustumCulled = false;
+    for (const b of this.bins) this.placeLid(b);
+    this.group.add(this.lids);
   }
 
-  placeLever(b) {
-    _q.setFromEuler(_e.set(-0.5 + b.lever * 1.25, 0, 0));
-    _m.compose(_p.set(b.x + CHUTE.w / 2 + 1.1, b.y + CHUTE.topY + 0.6, WALL.z + CHUTE.topZ + 1.6), _q, _s);
-    this.levers.setMatrixAt(b.index, _m);
-    this.levers.instanceMatrix.needsUpdate = true;
+  placeLid(b) {
+    _q.setFromEuler(_e.set(-b.lid * LID_OPEN, 0, 0));
+    _m.compose(b.hinge, _q, _s);
+    this.lids.setMatrixAt(b.index, _m);
+    this.lids.instanceMatrix.needsUpdate = true;
   }
 
   buildLabels() {
@@ -194,19 +269,20 @@ export class Wall {
     this.bins.forEach((b, i) => {
       const cx = (i % 4) * cw;
       const cy = Math.floor(i / 4) * ch;
-      let size = 54;
-      ctx.font = `600 ${size}px -apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif`;
+      let size = 58;
+      const font = () => `600 ${size}px -apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif`;
+      ctx.font = font();
       const text = b.def.name;
-      while (ctx.measureText(text).width > cw - 56 && size > 26) {
+      while (ctx.measureText(text).width > cw - 40 && size > 26) {
         size -= 2;
-        ctx.font = `600 ${size}px -apple-system, "SF Pro Display", "Helvetica Neue", Arial, sans-serif`;
+        ctx.font = font();
       }
       ctx.fillStyle = '#f2f2f4';
       ctx.fillText(text, cx + cw / 2, cy + ch / 2 + 2);
-      const g = new THREE.PlaneGeometry(12.6, 12.6 * (ch / cw));
+      const g = new THREE.PlaneGeometry(7.2, 7.2 * (ch / cw));
       const uv = g.attributes.uv;
       for (let k = 0; k < 4; k++) uv.setXY(k, (cx + uv.getX(k) * cw) / 2048, 1 - (cy + (1 - uv.getY(k)) * ch) / 2048);
-      g.translate(b.x, b.y + 2.3, WALL.z + 10.86);
+      g.translate(b.x, b.y + 1.35, WALL.z + 13.66);
       quads.push(g);
     });
     const tex = new THREE.CanvasTexture(cv);
@@ -216,189 +292,225 @@ export class Wall {
     this.group.add(mesh);
   }
 
-  buildBin(bin) {
+  async buildBin(bin) {
     const def = bin.def;
     const nv = def.variants || 1;
-    const lods = [];
-    for (let v = 0; v < nv; v++) lods.push(lodBuild(def, v));
-    const size = lods[0].size;
-    const r = rng(hashStr(def.id));
-    const cell = 0.45;
-    const gw = Math.ceil(BIN.innerW / cell);
-    const gd = Math.ceil(BIN.innerD / cell) + 1;
-    const hm = new Float32Array(gw * gd);
-    const longest = Math.max(size.x, size.y, size.z);
-    const round = Math.min(size.x, size.y, size.z) / longest > 0.62;
-    let lodTris = 0;
-    for (const l of lods[0].layers) lodTris += l.geometry.index ? l.geometry.index.count / 3 : l.geometry.attributes.position.count / 3;
-    const cap = clamp(Math.floor(26000 / Math.max(40, lodTris)), 6, 240);
-    const item = Math.max(0.3, size.x * size.y * size.z * 0.3);
-    const depth = clamp((cap * item) / (BIN.innerW * BIN.fill * 0.62), Math.min(BIN.innerD, Math.max(3.4, longest * 0.9)), BIN.innerD);
-    const zShift = (BIN.innerD - depth) / 2;
-    const maxCount = cap;
-    const poses = [];
-    let misses = 0;
-    const half = new THREE.Vector3(size.x / 2, size.y / 2, size.z / 2);
-    const rot = new THREE.Matrix4();
-    for (let n = 0; n < maxCount; n++) {
-      let best = null;
-      for (let tries = 0; tries < 14; tries++) {
-        if (round) _e.set(r() * 6.283, r() * 6.283, r() * 6.283);
-        else {
-          const lim = longest > BIN.innerW * 0.78 ? 0.22 : longest > depth * 0.9 ? 0.7 : Math.PI;
-          _e.set((r() - 0.5) * 0.7, (r() - 0.5) * 2 * lim + (r() < 0.5 ? 0 : Math.PI), (r() - 0.5) * 0.7);
-        }
-        _q.setFromEuler(_e);
-        rot.makeRotationFromQuaternion(_q);
-        const e = rot.elements;
-        const ex = Math.abs(e[0]) * half.x + Math.abs(e[4]) * half.y + Math.abs(e[8]) * half.z;
-        const ey = Math.abs(e[1]) * half.x + Math.abs(e[5]) * half.y + Math.abs(e[9]) * half.z;
-        const ez = Math.abs(e[2]) * half.x + Math.abs(e[6]) * half.y + Math.abs(e[10]) * half.z;
-        const fx = Math.min(ex * 0.8, BIN.innerW / 2 - 0.05);
-        const fz = Math.min(ez * 0.8, depth / 2 - 0.05);
-        const px = (r() - 0.5) * 2 * Math.max(0, BIN.innerW / 2 - ex * 0.92);
-        const pz = (r() - 0.5) * 2 * Math.max(0, depth / 2 - ez * 0.92);
-        const i0 = Math.max(0, Math.floor((px - fx + BIN.innerW / 2) / cell));
-        const i1 = Math.min(gw - 1, Math.floor((px + fx + BIN.innerW / 2) / cell));
-        const j0 = Math.max(0, Math.floor((pz - fz + depth / 2) / cell));
-        const j1 = Math.min(gd - 1, Math.floor((pz + fz + depth / 2) / cell));
-        const eh = ey * 0.76;
-        let y = eh;
-        for (let j = j0; j <= j1; j++)
-          for (let i = i0; i <= i1; i++) {
-            const dx = ((i + 0.5) * cell - BIN.innerW / 2 - px) / fx;
-            const dz = ((j + 0.5) * cell - depth / 2 - pz) / fz;
-            const d2 = dx * dx + dz * dz;
-            if (d2 >= 1) continue;
-            y = Math.max(y, hm[j * gw + i] + eh * Math.sqrt(1 - d2));
-          }
-        if (!best || y < best.y) best = { y, px, pz, ex: fx, ey: eh, ez: fz, q: _q.clone(), i0, i1, j0, j1 };
-      }
-      const y = best.y;
-      if (y + best.ey > BIN.fill) {
-        if (++misses > 5) break;
-        continue;
-      }
-      for (let j = best.j0; j <= best.j1; j++)
-        for (let i = best.i0; i <= best.i1; i++) {
-          const dx = ((i + 0.5) * cell - BIN.innerW / 2 - best.px) / best.ex;
-          const dz = ((j + 0.5) * cell - depth / 2 - best.pz) / best.ez;
-          const d2 = dx * dx + dz * dz;
-          if (d2 >= 1) continue;
-          hm[j * gw + i] = Math.max(hm[j * gw + i], y + best.ey * Math.sqrt(1 - d2));
-        }
-      poses.push({ x: best.px, y, z: best.pz + zShift, q: best.q, v: Math.floor(r() * nv) % nv });
+    let pile = null;
+    if (!this.index) this.index = fetch('assets/piles/index.json').then((r) => (r.ok ? r.json() : [])).catch(() => []);
+    const baked = await this.index;
+    if (baked.includes(def.id)) {
+      try {
+        const r = await fetch('assets/piles/' + def.id + '.json');
+        if (r.ok) pile = await r.json();
+      } catch (e) {}
     }
-    poses.sort((a, b) => a.y - b.y);
-    const baseX = bin.x;
-    const baseY = bin.y + BIN.y + 0.35;
-    const baseZ = WALL.z + 0.2 + BIN.d / 2;
+    const probe = lodBuild(def, 0, 0.3);
+    const t03 = Math.max(12, trisOf(probe.layers));
+    bin.size = probe.size;
+    if (!pile) pile = loosePile(def, probe.size, nv, t03);
+    bin.loose = !!pile.loose;
+    bin.tris1 = t03 / 0.09;
+    const farDetail = clamp(0.3 * Math.sqrt(FAR_BUDGET / (pile.n * t03)), 0.14, 0.5);
+    bin.nearDetail = clamp(Math.sqrt(NEAR_BUDGET / (pile.n * bin.tris1)), 0.3, 1.25);
     const perV = [];
-    for (let v = 0; v < nv; v++) perV.push(poses.filter((p) => p.v === v));
-    bin.variantPoses = perV;
-    bin.variantLeft = perV.map((l) => l.length);
-    bin.meshes = [];
+    for (let v = 0; v < nv; v++) perV.push([]);
+    for (let i = 0; i < pile.n; i++) {
+      perV[pile.v[i] % nv].push({
+        x: pile.p[i * 3] / 100,
+        y: pile.p[i * 3 + 1] / 100,
+        z: pile.p[i * 3 + 2] / 100,
+        q: new THREE.Quaternion(pile.q[i * 4] / 10000, pile.q[i * 4 + 1] / 10000, pile.q[i * 4 + 2] / 10000, pile.q[i * 4 + 3] / 10000).normalize(),
+        ao: pile.ao[i] / 255,
+      });
+    }
+    bin.all = perV;
+    bin.active = perV.map((l) => l.slice());
+    bin.sets = [];
     for (let v = 0; v < nv; v++) {
       const list = perV[v];
       if (!list.length) {
-        bin.meshes.push([]);
+        bin.sets.push(null);
         continue;
       }
-      const set = [];
-      for (const l of lods[v].layers) {
+      const far = Math.abs(farDetail - 0.3) < 0.02 && v === 0 ? probe : lodBuild(def, v, farDetail);
+      const meshes = [];
+      for (const l of far.layers) {
         const im = new THREE.InstancedMesh(l.geometry, l.material, list.length);
-        list.forEach((p, i) => {
-          _m.compose(_p.set(baseX + p.x, baseY + p.y, baseZ + p.z), p.q, _s);
-          im.setMatrixAt(i, _m);
-        });
-        im.instanceMatrix.needsUpdate = true;
-        im.computeBoundingSphere();
+        im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
         im.castShadow = false;
         im.receiveShadow = false;
         if (l.material.transparent) im.renderOrder = 2;
         this.group.add(im);
-        set.push(im);
+        meshes.push(im);
       }
-      bin.meshes.push(set);
+      bin.sets.push({ meshes, far: far.layers.map((l) => l.geometry), near: null });
+      list.forEach((p, i) => this.placeInstance(bin, v, i, p));
+      for (const im of meshes) {
+        im.instanceMatrix.needsUpdate = true;
+        im.instanceColor.needsUpdate = true;
+        im.computeBoundingSphere();
+      }
     }
-    bin.total = poses.length;
-    bin.left = poses.length;
-    bin.size = size;
+    bin.total = pile.n;
+    bin.left = pile.n;
     bin.ready = true;
   }
 
-  takeOne(bin) {
-    if (!bin.ready) return -1;
-    if (bin.left <= Math.max(2, bin.total * 0.25)) this.refill(bin);
-    let best = -1;
-    let by = -Infinity;
-    bin.variantLeft.forEach((n, v) => {
-      if (n <= 0) return;
-      const y = bin.variantPoses[v][n - 1].y;
-      if (y > by) {
-        by = y;
-        best = v;
+  placeInstance(bin, v, i, p) {
+    _m.compose(_p.set(bin.origin.x + p.x, bin.origin.y + p.y, bin.origin.z + p.z), p.q, _s);
+    for (const im of bin.sets[v].meshes) {
+      im.setMatrixAt(i, _m);
+      im.setColorAt(i, _c.setScalar(p.ao));
+    }
+  }
+
+  setNear(bin, on) {
+    if (!bin || !bin.ready || bin.near === on) return;
+    bin.near = on;
+    const nv = bin.def.variants || 1;
+    for (let v = 0; v < nv; v++) {
+      const set = bin.sets[v];
+      if (!set) continue;
+      if (on && !set.near) set.near = lodBuild(bin.def, v, bin.nearDetail).layers.map((l) => l.geometry);
+      set.meshes.forEach((im, i) => {
+        im.geometry = on ? set.near[i] || set.far[i] : set.far[i];
+        im.castShadow = on;
+        im.receiveShadow = on;
+      });
+    }
+  }
+
+  scoopOut(bin, wx, wz, n) {
+    if (!bin.ready) return [];
+    if (bin.left - n < bin.total * 0.28) this.refill(bin);
+    const lx = wx - bin.origin.x;
+    const lz = wz - bin.origin.z;
+    const cand = [];
+    bin.active.forEach((list, v) => {
+      list.forEach((p) => cand.push({ v, p, d: Math.hypot(p.x - lx, (p.z - lz) * 0.8) }));
+    });
+    let radius = 2.6;
+    let pool = [];
+    while (pool.length < n && radius < 30) {
+      pool = cand.filter((c) => c.d <= radius);
+      radius += 1.2;
+    }
+    pool.sort((a, b) => b.p.y - a.p.y);
+    const taken = pool.slice(0, n);
+    for (const t of taken) {
+      const list = bin.active[t.v];
+      const i = list.indexOf(t.p);
+      if (i < 0) continue;
+      const last = list.pop();
+      if (last !== t.p) {
+        list[i] = last;
+        this.placeInstance(bin, t.v, i, last);
+      }
+      bin.left--;
+    }
+    bin.sets.forEach((set, v) => {
+      if (!set) return;
+      for (const im of set.meshes) {
+        im.count = bin.active[v].length;
+        im.instanceMatrix.needsUpdate = true;
+        im.instanceColor.needsUpdate = true;
       }
     });
-    if (best < 0) return 0;
-    bin.variantLeft[best]--;
-    bin.left--;
-    for (const im of bin.meshes[best]) im.count = bin.variantLeft[best];
-    return best;
+    return taken.map((t) => t.v);
   }
 
   refill(bin) {
-    bin.variantLeft = bin.variantPoses.map((l) => l.length);
+    if (!bin.ready) return;
+    bin.active = bin.all.map((l) => l.slice());
     bin.left = bin.total;
-    bin.meshes.forEach((set, v) => {
-      for (const im of set) im.count = bin.variantLeft[v];
+    bin.sets.forEach((set, v) => {
+      if (!set) return;
+      bin.active[v].forEach((p, i) => this.placeInstance(bin, v, i, p));
+      for (const im of set.meshes) {
+        im.count = bin.active[v].length;
+        im.instanceMatrix.needsUpdate = true;
+        im.instanceColor.needsUpdate = true;
+      }
     });
   }
 
+  setFocus(bin) {
+    if (this.focused && this.focused !== bin) {
+      this.setNear(this.focused, false);
+      this.focused.lidT = 0;
+    }
+    this.focused = bin || null;
+    if (bin) {
+      this.setNear(bin, true);
+      bin.lidT = 1;
+    }
+    this.veilT = bin ? 0.8 : 0;
+    if (!bin) return;
+    const z = WALL.z + BIN.z0 + BIN.noseZ + 0.9;
+    const X0 = -this.width / 2 - 80;
+    const X1 = this.width / 2 + 80;
+    const Y0 = WALL.y0 - 40;
+    const Y1 = WALL.y0 + this.height + 40;
+    const x0 = bin.x - WALL.cellW / 2 + 0.2;
+    const x1 = bin.x + WALL.cellW / 2 - 0.2;
+    const y0 = bin.y + 0.1;
+    const y1 = bin.y + WALL.cellH + 5;
+    const quads = [
+      [X0, Y0, x0, Y1],
+      [x1, Y0, X1, Y1],
+      [x0, y1, x1, Y1],
+      [x0, Y0, x1, y0],
+    ];
+    const p = this.veil.geometry.attributes.position;
+    quads.forEach((q, i) => {
+      p.setXYZ(i * 4, q[0], q[1], z);
+      p.setXYZ(i * 4 + 1, q[2], q[1], z);
+      p.setXYZ(i * 4 + 2, q[2], q[3], z);
+      p.setXYZ(i * 4 + 3, q[0], q[3], z);
+    });
+    p.needsUpdate = true;
+  }
+
   pick(ray) {
-    const z = WALL.z + BIN.d + 0.2;
+    const z = WALL.z + BIN.z0 + BIN.frontZ;
     const t = (z - ray.origin.z) / ray.direction.z;
     if (!(t > 0)) return null;
     const x = ray.origin.x + ray.direction.x * t;
     const y = ray.origin.y + ray.direction.y * t;
     const col = Math.floor((x + this.width / 2) / WALL.cellW);
     const rowUp = Math.floor((y - WALL.y0) / WALL.cellH);
-    if (col < 0 || col >= WALL.cols || rowUp < 0 || rowUp >= WALL.rows) return null;
-    const row = WALL.rows - 1 - rowUp;
-    return this.bins[row * WALL.cols + col] || null;
-  }
-
-  rig(bin, aspect) {
-    const portrait = aspect < 0.8;
-    return { t: [bin.x, bin.y - (portrait ? 3 : 1.5), WALL.z + 12], w: portrait ? 31 : 40, h: portrait ? 50 : 38, elev: 17, fov: 28 };
+    if (col < 0 || col >= this.cols || rowUp < 0 || rowUp >= this.rows) return null;
+    const row = this.rows - 1 - rowUp;
+    return this.bins[row * this.cols + col] || null;
   }
 
   overviewRig(aspect, panX = 0) {
     const fitW = this.width + 6;
-    const fitH = this.height + 6;
+    const fitH = Math.max(this.height + 6, 60);
     const wide = fitW / fitH;
-    if (aspect >= wide * 0.92) return { t: [0, this.center.y, WALL.z + 6], w: fitW, h: fitH, elev: 0, fov: 28, pan: 0 };
+    if (aspect >= wide * 0.92) return { t: [0, this.center.y, WALL.z + 8], w: fitW, h: fitH, elev: 0, fov: 28, pan: 0 };
     const w = fitH * aspect;
     const pan = Math.max(0, (fitW - w) / 2);
-    return { t: [clamp(panX, -pan, pan), this.center.y, WALL.z + 6], w, h: fitH, elev: 0, fov: 28, pan };
+    return { t: [clamp(panX, -pan, pan), this.center.y, WALL.z + 8], w, h: fitH, elev: 0, fov: 28, pan };
   }
 
-  update(dt, budgetMs = 5) {
+  update(dt) {
     let moving = false;
-    if (this.queue.length) {
-      const t0 = performance.now();
-      while (this.queue.length && performance.now() - t0 < budgetMs) {
-        const bin = this.queue.shift();
-        try {
-          this.buildBin(bin);
-        } catch (e) {
+    if (this.queue.length && !this.building) {
+      const bin = this.queue.shift();
+      this.building = true;
+      this.buildBin(bin)
+        .catch((e) => {
           console.error('[wall] bin failed', bin.def.id, e);
-          bin.ready = false;
           bin.broken = true;
-        }
-      }
+        })
+        .finally(() => {
+          this.building = false;
+          this.game.wake();
+        });
       moving = true;
     }
+    if (this.building) moving = true;
     const vm = this.veil.material;
     if (Math.abs(vm.opacity - this.veilT) > 0.004) {
       vm.opacity = damp(vm.opacity, this.veilT, 7, dt);
@@ -406,9 +518,9 @@ export class Wall {
       moving = true;
     }
     for (const b of this.bins) {
-      if (Math.abs(b.lever - b.leverT) > 0.002) {
-        b.lever = damp(b.lever, b.leverT, 22, dt);
-        this.placeLever(b);
+      if (Math.abs(b.lid - b.lidT) > 0.002) {
+        b.lid = damp(b.lid, b.lidT, 9, dt);
+        this.placeLid(b);
         moving = true;
       }
     }
@@ -416,24 +528,6 @@ export class Wall {
   }
 
   get loaded() {
-    return 1 - this.queue.length / Math.max(1, this.bins.length);
+    return 1 - (this.queue.length + (this.building ? 1 : 0)) / Math.max(1, this.bins.length);
   }
-}
-
-let glowTex = null;
-function glowTexture() {
-  if (glowTex) return glowTex;
-  const cv = document.createElement('canvas');
-  cv.width = 64;
-  cv.height = 256;
-  const ctx = cv.getContext('2d');
-  const g = ctx.createLinearGradient(0, 0, 0, 256);
-  g.addColorStop(0, '#f6f8ff');
-  g.addColorStop(0.5, '#e9edf7');
-  g.addColorStop(1, '#cfd5e2');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, 64, 256);
-  glowTex = new THREE.CanvasTexture(cv);
-  glowTex.colorSpace = THREE.SRGBColorSpace;
-  return glowTex;
 }

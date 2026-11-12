@@ -1,6 +1,6 @@
-// Candy Wall: game flow (wall, dispenser focus, table), pointer routing, pouring, feeding, sounds and the render loop.
+// Candy Wall: game flow (wall, bin focus with the scoop, table), pointer routing, feeding, sounds and the render loop.
 import * as THREE from 'three';
-import { IS_TOUCH, PARAMS, TABLE, TEST, WALL } from './config.js';
+import { BIN, IS_TOUCH, PARAMS, TABLE, TEST, WALL } from './config.js';
 import { Stage } from './stage.js';
 import { Physics } from './physics.js';
 import { Tray } from './tray.js';
@@ -9,9 +9,10 @@ import { Piece, Pieces } from './pieces.js';
 import { Fx } from './fx.js';
 import { Head } from './head.js';
 import { Tools } from './tools.js';
+import { Scoop } from './scoop.js';
 import { audio } from './audio.js';
 import { CANDIES, PACKS } from './candies/index.js';
-import { buildMeshes, measureSet, prepare, wholeSet } from './candy.js';
+import { prepare } from './candy.js';
 import { Tweens, clamp, damp, ease, lerp, rand, rayY, smooth } from './util.js';
 
 const $ = (id) => document.getElementById(id);
@@ -24,8 +25,8 @@ const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
 const portrait = camera.aspect < 0.85;
 const L = portrait
-  ? { tray: V(0, 0, 21), work: V(0, 0, -4), head: V(0, 0, -37), rig: { t: [0, 18.6, 9.7], w: 36, h: 62, elev: 38 }, sticks: V(15.5, 0.14, -14), knife: V(-15, 0.1, -2) }
-  : { tray: V(-27, 0, 9), work: V(8, 0, 9), head: V(8, 0, -34), rig: { t: [-7, 15.1, 1.7], w: 92, h: 55, elev: 33 }, sticks: V(24.5, 0.14, -2), knife: V(30, 0.1, 10) };
+  ? { tray: V(0, 0, 24), work: V(0, 0, -8), head: V(0, 0, -40), rig: { t: [0, 21.5, 17.8], w: 40, h: 70, elev: 40 }, sticks: V(17, 0.14, -18), knife: V(-17, 0.1, -6), shadow: [0, 0, 2, 48] }
+  : { tray: V(-28, 0, 6), work: V(13, 0, 8), head: V(13, 0, -34), rig: { t: [-7, 15.1, 1.7], w: 98, h: 55, elev: 33 }, sticks: V(29, 0.14, -2), knife: V(34.5, 0.1, 10), shadow: [-7, 0, 2, 56] };
 
 const game = {
   stage,
@@ -34,7 +35,7 @@ const game = {
   tweens,
   view: 'boot',
   bin: null,
-  cell: 0,
+  cell: 1,
   panX: 0,
   dirty: true,
   bounds: { x0: -TABLE.w / 2 + 4, x1: TABLE.w / 2 - 4, z0: L.head.z + 4, z1: TABLE.d / 2 - 4 },
@@ -56,10 +57,8 @@ const tray = (game.tray = new Tray(physics, L.tray));
 scene.add(tray.group);
 const trayTarget = new THREE.Vector3();
 const trayOff = new THREE.Vector3();
-const cellGlow = new THREE.Mesh(new THREE.PlaneGeometry(7.1, 7.1), new THREE.MeshBasicMaterial({ color: 0x9fc4ff, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
-cellGlow.rotation.x = -Math.PI / 2;
-cellGlow.renderOrder = 5;
-tray.group.add(cellGlow);
+let trayAngle = 0;
+let trayAngleT = 0;
 
 const pieces = (game.pieces = new Pieces(game));
 const fx = (game.fx = new Fx(game));
@@ -69,6 +68,7 @@ const tools = (game.tools = new Tools(game));
 tools.setRest(L.sticks, L.knife);
 const wall = (game.wall = new Wall(game, CANDIES));
 scene.add(wall.group);
+const scoop = (game.scoop = new Scoop(game));
 
 const ui = (game.ui = {
   caption(text) {
@@ -92,9 +92,6 @@ const ui = (game.ui = {
   },
 });
 
-const DROP = 6.2;
-const slides = [];
-
 function overviewRig() {
   const r = wall.overviewRig(camera.aspect, game.panX);
   game.panLimit = r.pan;
@@ -104,88 +101,78 @@ function overviewRig() {
 
 function focusRig(bin) {
   const p = camera.aspect < 0.85;
-  return { t: [bin.x, bin.y - (p ? 2.5 : 1), WALL.z + 24], w: p ? 34 : 56, h: p ? 60 : 52, elev: 30, fov: 28 };
+  return { t: [bin.x, bin.y - (p ? 5 : 3.5), WALL.z + 28], w: p ? 40 : 56, h: p ? 66 : 56, elev: 38, fov: 28 };
 }
+
+game.onScoop = (what, sc) => {
+  if (game.view !== 'focus' || !game.bin) return;
+  const b = game.bin;
+  const p = camera.aspect < 0.85;
+  if (what === 'dig') stage.setRig({ t: [b.x, b.y + 9.5, WALL.z + 11], w: p ? 24 : 32, h: p ? 34 : 25, elev: 30, fov: 28 }, 0.55);
+  else if (what === 'pour') stage.setRig({ t: [sc.pos.x * 0.6 + b.x * 0.4, tray.group.position.y + 2, sc.pos.z - 4], w: p ? 28 : 38, h: p ? 40 : 30, elev: 46, fov: 28 }, 0.5);
+  else stage.setRig(focusRig(b), what === 'carry' ? 0.7 : 0.9);
+};
 
 function dockOffset() {
-  return V(game.panX - tray.home.x, WALL.counterY - tray.home.y, WALL.z + 18 - tray.home.z);
+  return V(game.panX - tray.home.x, WALL.counterY - tray.home.y, WALL.z + 25 - tray.home.z);
 }
 
-function focusOffset(bin, cell) {
-  const c = tray.cells[cell];
-  return V(bin.spout.x - c.x, bin.spout.y - DROP - (tray.home.y + tray.floorY + tray.depth), bin.spout.z + 1.2 - c.z);
+function focusPose(bin) {
+  const rim = bin.y + BIN.y - 3.4;
+  return { off: V(bin.x - tray.home.x, rim - tray.depth - tray.home.y, WALL.z + 39 - tray.home.z), angle: 0 };
 }
 
-function cellStats() {
-  const n = tray.cells.map(() => ({ count: 0, vol: 0 }));
-  for (const p of pieces.list) {
-    if (p.zone !== 'tray') continue;
-    const c = tray.cellAt(p.pos.x, p.pos.z);
-    if (!c) continue;
-    n[c.index].count++;
-    n[c.index].vol += p.size[0] * p.size[1] * p.size[2] * 0.5;
+function setTrayPose(off, angle, snap = false) {
+  trayTarget.copy(off);
+  if (angle !== null && angle !== undefined) trayAngleT = angle + Math.round((trayAngle - angle) / (Math.PI * 2)) * Math.PI * 2;
+  if (snap) {
+    trayOff.copy(trayTarget);
+    trayAngle = trayAngleT;
+    tray.setPose(trayOff, trayAngle);
+    pieces.trayMoved();
   }
-  return n;
 }
 
-function cellFull(st, bin) {
-  const s = bin.size;
-  const v = s ? s.x * s.y * s.z * 0.5 : 4;
-  return st.count >= 26 || (st.count > 0 && st.vol + v > 96);
-}
-
-function pickCell(bin) {
-  const st = cellStats();
-  if (!cellFull(st[game.cell], bin) && st[game.cell].count === 0) return game.cell;
-  for (let i = 0; i < st.length; i++) if (st[i].count === 0) return i;
-  if (!cellFull(st[game.cell], bin)) return game.cell;
-  for (let i = 0; i < st.length; i++) if (!cellFull(st[i], bin)) return i;
-  return game.cell;
-}
-
-function setCell(i, sound = true) {
-  if (game.cell !== i && sound) audio.play('tray_set', { vol: 0.35, rate: 1.3 });
-  game.cell = i;
-  if (game.view === 'focus' && game.bin) trayTarget.copy(focusOffset(game.bin, i));
-  game.wake();
+function traySettled() {
+  return trayOff.distanceToSquared(trayTarget) < 0.01 && Math.abs(trayAngle - trayAngleT) < 0.01;
 }
 
 function setView(v, bin = null) {
   const prev = game.view;
   tools.cancel();
-  stopPour();
   game.view = v;
   wall.setFocus(v === 'focus' ? bin : null);
   if (v === 'wall') {
     game.bin = null;
     stage.setRig(overviewRig(), prev === 'boot' ? 0 : 1.1);
-    trayTarget.copy(dockOffset());
+    setTrayPose(dockOffset(), null);
+    stage.focusShadow(game.panX, WALL.counterY + 10, WALL.z + 20, 60);
     headOut();
   } else if (v === 'focus') {
     game.bin = bin;
-    game.cell = pickCell(bin);
     stage.setRig(focusRig(bin), 0.85);
-    trayTarget.copy(focusOffset(bin, game.cell));
+    const pose = focusPose(bin);
+    setTrayPose(pose.off, pose.angle);
+    stage.focusShadow(bin.x, bin.y + 2, WALL.z + 26, 34);
     headOut();
     if (prev !== 'focus') audio.play('whoosh', { vol: 0.25 });
   } else {
     game.bin = null;
     stage.setRig(L.rig, 1.25);
-    trayTarget.set(0, 0, 0);
+    setTrayPose(V(0, 0, 0), 0);
+    stage.focusShadow(...L.shadow);
     tweens.after(0.55, () => game.view === 'table' && headIn());
     tweens.after(0.9, () => game.view === 'table' && audio.play('tray_set', { vol: 0.6 }));
     audio.play('whoosh', { vol: 0.3, rate: 0.9 });
   }
-  if (prev === 'boot') {
-    trayOff.copy(trayTarget);
-    tray.setOffset(trayOff);
-  }
+  if (prev === 'boot') setTrayPose(trayTarget.clone(), null, true);
+  scoop.setBin(v === 'focus' ? bin : null);
   ui.sync();
   hint(v);
   game.wake();
 }
 
-const hints = { wall: 'Tap a dispenser', focus: 'Hold the dispenser to pour', table: 'Drag a sweet to the head, or pick up the knife' };
+const hints = { wall: 'Tap a bin', focus: 'Scoop the sweets and pour them onto the tray', table: 'Drag a sweet to the head, or pick up the knife' };
 const hinted = {};
 function hint(v) {
   if (hinted[v] || !hints[v] || TEST) return;
@@ -235,114 +222,12 @@ function headOut() {
   });
 }
 
-let pouring = false;
-let pourAcc = 0;
-let pourRattle = 0;
-function startPour() {
-  if (pouring || !game.bin || !game.bin.ready) return;
-  pouring = true;
-  pourAcc = 0.85;
-  game.bin.leverT = 1;
-  audio.play('lever', { vol: 0.8 });
-  game.wake();
-}
-
-function stopPour() {
-  if (!pouring) return;
-  pouring = false;
-  if (game.bin) game.bin.leverT = 0;
-  audio.play('lever', { vol: 0.45, rate: 1.25 });
-  game.wake();
-}
-
-function pourStep(dt) {
-  const bin = game.bin;
-  if (!pouring || !bin) return;
-  const s = bin.size;
-  const vol = s.x * s.y * s.z;
-  const rate = clamp(24 / Math.pow(vol, 0.62), 1.5, 8.5);
-  pourAcc += dt * rate;
-  if (pourAcc < 1) return;
-  pourAcc -= 1;
-  if (pieces.list.length >= 210) {
-    stopPour();
-    return;
-  }
-  const st = cellStats();
-  for (const sl of slides) {
-    st[sl.cell].count++;
-    st[sl.cell].vol += sl.prep.size.x * sl.prep.size.y * sl.prep.size.z * 0.5;
-  }
-  if (cellFull(st[game.cell], bin)) {
-    const next = pickCell(bin);
-    if (next === game.cell || cellFull(st[next], bin)) {
-      stopPour();
-      return;
-    }
-    setCell(next);
-    pourAcc = -0.4;
-    return;
-  }
-  slideOut(bin, wall.takeOne(bin));
-  pourRattle -= 1;
-  if (pourRattle <= 0) {
-    pourRattle = 3;
-    const land = bin.def.sound && bin.def.sound.land;
-    if (land === 'hard' || land === 'glass' || land === 'tiny' || land === 'choc') audio.play('pour_candy', { vol: 0.35, rate: rand(0.9, 1.2), gap: 0.2 });
-  }
-}
-
-function slideOut(bin, variant) {
-  const prep = prepare(bin.def, Math.max(0, variant));
-  const set = wholeSet(prep);
-  const group = buildMeshes(set, (prep.wholeMeasure || (prep.wholeMeasure = measureSet(set))).center, { shadow: false });
-  group.matrixAutoUpdate = false;
-  tray.group.add(group);
-  const long = Math.max(prep.size.x, prep.size.z) > 6.4;
-  const q = new THREE.Quaternion();
-  if (long) q.setFromEuler(new THREE.Euler(0.42, prep.size.x >= prep.size.z ? Math.PI / 2 : 0, 0, 'YXZ'));
-  else q.setFromEuler(new THREE.Euler(rand(6.28), rand(6.28), rand(6.28)));
-  const lift = Math.min(prep.size.x, prep.size.y, prep.size.z) * 0.5 + 0.2;
-  const jx = long ? 0 : rand(-1, 1) * Math.max(0, 3.2 - Math.max(prep.size.x, prep.size.z) * 0.5);
-  const from = V(bin.chuteTop.x + jx, bin.chuteTop.y + lift, bin.chuteTop.z + 1.2);
-  const to = V(bin.spout.x + jx * 0.6, bin.spout.y + lift + 0.4, bin.spout.z - (long ? Math.max(prep.size.x, prep.size.z) * 0.32 : 0.6));
-  slides.push({ prep, set, group, q, from, to, t: 0, dur: 0.3, spin: V(rand(-1, 1), rand(-1, 1), rand(-1, 1)).multiplyScalar(long ? 0 : 7), cell: game.cell });
-}
-
-const _sq = new THREE.Quaternion();
-function stepSlides(dt) {
-  for (let i = slides.length - 1; i >= 0; i--) {
-    const s = slides[i];
-    s.t += dt;
-    const k = Math.min(1, s.t / s.dur);
-    const e = k * k;
-    const pos = _t.copy(s.from).lerp(s.to, e).sub(trayOff);
-    if (s.spin.lengthSq() > 0) {
-      _sq.setFromAxisAngle(_m.copy(s.spin).normalize(), s.spin.length() * dt);
-      s.q.premultiply(_sq);
-    }
-    s.group.matrix.compose(pos, s.q, V(1, 1, 1));
-    s.group.matrixWorldNeedsUpdate = true;
-    if (k >= 1) {
-      tray.group.remove(s.group);
-      slides.splice(i, 1);
-      const dir = _m.copy(s.to).sub(s.from).multiplyScalar((2 / s.dur) * 0.2);
-      pieces.spawn(s.set, { pos: pos.clone(), quat: s.q, vel: V(dir.x, dir.y - 12, dir.z), spin: { x: s.spin.x * 0.6, y: s.spin.y * 0.6, z: s.spin.z * 0.6 }, zone: 'tray' });
-    }
-  }
-  return slides.length > 0;
-}
-
 function spawnIntoCell(def, variant, cellIndex, drop = 8) {
   const prep = prepare(def, Math.max(0, variant));
   const c = tray.cells[cellIndex];
-  const room = Math.max(0, c.half - Math.max(prep.size.x, prep.size.z) * 0.5);
-  const j = Math.min(room, 1.6);
-  const long = Math.max(prep.size.x, prep.size.z) > c.half * 2;
-  const q = new THREE.Quaternion();
-  if (long) q.setFromEuler(new THREE.Euler(rand(-0.25, 0.25), rand(-0.5, 0.5) + (Math.random() < 0.5 ? 0 : Math.PI), rand(0.5, 0.9) * (Math.random() < 0.5 ? -1 : 1)));
-  else q.setFromEuler(new THREE.Euler(rand(6.28), rand(6.28), rand(6.28)));
-  const pos = V(c.x + rand(-j, j), tray.home.y + tray.floorY + tray.depth + drop, c.z + rand(-j, j));
+  const j = Math.max(0, c.r - Math.max(prep.size.x, prep.size.z) * 0.5) * 0.7;
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rand(6.28), rand(6.28), rand(6.28)));
+  const pos = V(c.x + rand(-j, j), tray.home.y + tray.depth + drop, c.z + rand(-j, j));
   return pieces.spawnWhole(prep, { pos, quat: q, vel: V(rand(-4, 4), -30, rand(-4, 4)), spin: { x: rand(-5, 5), y: rand(-5, 5), z: rand(-5, 5) }, zone: 'tray' });
 }
 
@@ -482,13 +367,10 @@ game.eat = (p) => {
       const pos = V(...m.center).sub(c0).applyQuaternion(e.quat).add(e.pos);
       pieces.spawn(stick, { pos, quat: e.quat, vel: V(0, 6, 30), zone: 'table' });
     }
-    const g = e.group;
     const from = e.pos.clone();
     const sc0 = 1;
-    pieces.physics.unregister(e.collider);
-    pieces.physics.world.removeRigidBody(e.body);
-    pieces.list.splice(pieces.list.indexOf(e), 1);
-    e.dead = true;
+    const g = pieces.detach(e);
+    if (!g) continue;
     scene.add(g);
     const inside = mouth.clone().add(V(0, -0.3, -2.2));
     tweens.add({
@@ -624,21 +506,14 @@ function onDown(e) {
     ptr.mode = 'tool';
     tools.pointerDown(e.clientX, e.clientY);
   } else if (game.view === 'focus') {
-    const ray = stage.ray(e.clientX, e.clientY);
-    const rim = tray.home.y + tray.floorY + tray.depth + trayOff.y;
-    const hit = rayY(ray, rim, _t);
-    const c = hit ? tray.cellAt(hit.x - trayOff.x, hit.z - trayOff.z) : null;
-    const bin = wall.pick(ray);
-    if (c && (!bin || hit.z > WALL.z + 11)) {
-      ptr.mode = 'cell';
-      ptr.cell = c.index;
-    } else if (bin === game.bin) {
-      ptr.mode = 'pour';
-      startPour();
-    } else if (bin) {
-      ptr.mode = 'bin';
-      ptr.bin = bin;
-    } else ptr.mode = 'swipe';
+    if (scoop.down(e.clientX, e.clientY)) ptr.mode = 'scoop';
+    else {
+      const bin = wall.pick(stage.ray(e.clientX, e.clientY));
+      if (bin && bin !== game.bin && scoop.state === 'idle') {
+        ptr.mode = 'bin';
+        ptr.bin = bin;
+      } else ptr.mode = 'scoop';
+    }
   } else if (game.view === 'wall') ptr.mode = 'pan';
 }
 
@@ -646,6 +521,9 @@ function onMove(e) {
   if (!ptr || e.pointerId !== ptr.id) {
     if (game.view === 'table' && !IS_TOUCH) {
       tools.pointerMove(e.clientX, e.clientY);
+      game.wake();
+    } else if (game.view === 'focus' && !IS_TOUCH) {
+      scoop.pointer(e.clientX, e.clientY);
       game.wake();
     }
     return;
@@ -655,12 +533,13 @@ function onMove(e) {
   ptr.moved = Math.max(ptr.moved, Math.hypot(ptr.x - ptr.x0, ptr.y - ptr.y0));
   game.wake();
   if (ptr.mode === 'tool') tools.pointerMove(e.clientX, e.clientY);
+  else if (ptr.mode === 'scoop' || ptr.mode === 'bin') scoop.pointer(e.clientX, e.clientY);
   else if (ptr.mode === 'pan' && game.panLimit > 0) {
     const perPx = stage.cur.h / stage.h;
     game.panX = clamp(ptr.pan0 - (ptr.x - ptr.x0) * perPx, -game.panLimit, game.panLimit);
     stage.cur.t.x = game.panX;
     stage.place();
-    trayTarget.copy(dockOffset());
+    setTrayPose(dockOffset(), null);
   }
 }
 
@@ -670,20 +549,11 @@ function onUp(e) {
   ptr = null;
   game.wake();
   if (p.mode === 'tool') tools.pointerUp();
-  else if (p.mode === 'pour') stopPour();
-  else if (p.mode === 'cell' && p.moved < 12) setCell(p.cell);
+  else if (p.mode === 'scoop') scoop.up();
   else if (p.mode === 'bin' && p.moved < 12) setView('focus', p.bin);
   else if (p.mode === 'pan' && p.moved < 10) {
     const bin = wall.pick(stage.ray(p.x, p.y));
     if (bin && bin.ready) setView('focus', bin);
-  }
-  if ((p.mode === 'swipe' || p.mode === 'bin' || p.mode === 'cell') && p.moved > 60 && Math.abs(p.x - p.x0) > Math.abs(p.y - p.y0) * 1.5 && game.bin) {
-    const dir = p.x < p.x0 ? 1 : -1;
-    const col = game.bin.col + dir;
-    if (col >= 0 && col < WALL.cols) {
-      const nb = wall.bins[game.bin.row * WALL.cols + col];
-      if (nb && nb.ready) setView('focus', nb);
-    }
   }
 }
 
@@ -693,6 +563,7 @@ canvas.addEventListener('pointerup', onUp);
 canvas.addEventListener('pointercancel', onUp);
 canvas.addEventListener('pointerleave', () => {
   tools.hover.on = false;
+  scoop.hover = false;
   game.wake();
 });
 canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -703,7 +574,7 @@ canvas.addEventListener(
     game.panX = clamp(game.panX + (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) * 0.12, -game.panLimit, game.panLimit);
     stage.cur.t.x = game.panX;
     stage.place();
-    trayTarget.copy(dockOffset());
+    setTrayPose(dockOffset(), null);
     game.wake();
   },
   { passive: true }
@@ -730,9 +601,9 @@ window.addEventListener('keydown', (e) => {
   else if (game.view === 'focus' && game.bin && (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
     const dc = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
     const dr = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0;
-    const col = clamp(game.bin.col + dc, 0, WALL.cols - 1);
-    const row = clamp(game.bin.row + dr, 0, WALL.rows - 1);
-    const nb = wall.bins[row * WALL.cols + col];
+    const col = clamp(game.bin.col + dc, 0, wall.cols - 1);
+    const row = clamp(game.bin.row + dr, 0, wall.rows - 1);
+    const nb = wall.bins[row * wall.cols + col];
     if (nb && nb.ready && nb !== game.bin) setView('focus', nb);
   }
 });
@@ -768,7 +639,7 @@ function frame(now) {
     active = true;
   }
   if (stage.update(dt)) active = true;
-  if (wall.update(dt, loadDone ? 4 : 9)) active = true;
+  if (wall.update(dt)) active = true;
   if (!loadDone) {
     $('load').firstElementChild.style.width = (wall.loaded * 100).toFixed(0) + '%';
     if (wall.loaded >= 1) {
@@ -777,24 +648,16 @@ function frame(now) {
       if (window.T) window.T.ready = true;
     }
   }
-  if (trayOff.distanceToSquared(trayTarget) > 1e-5) {
+  if (trayOff.distanceToSquared(trayTarget) > 1e-5 || Math.abs(trayAngle - trayAngleT) > 1e-4) {
     trayOff.lerp(trayTarget, 1 - Math.exp(-dt * 9));
+    trayAngle = damp(trayAngle, trayAngleT, 8, dt);
     if (trayOff.distanceToSquared(trayTarget) < 1e-5) trayOff.copy(trayTarget);
-    tray.setOffset(trayOff);
+    if (Math.abs(trayAngle - trayAngleT) < 1e-4) trayAngle = trayAngleT;
+    tray.setPose(trayOff, trayAngle);
+    pieces.trayMoved();
     active = true;
   }
-  const glowT = game.view === 'focus' ? 0.2 : 0;
-  if (Math.abs(cellGlow.material.opacity - glowT) > 0.004 || game.view === 'focus') {
-    cellGlow.material.opacity = damp(cellGlow.material.opacity, glowT, 8, dt);
-    const c = tray.cells[game.cell];
-    cellGlow.position.set(c.x, tray.home.y + tray.floorY + 0.03, c.z);
-    cellGlow.visible = cellGlow.material.opacity > 0.005;
-  }
-  if (pouring) {
-    pourStep(dt);
-    active = true;
-  }
-  if (slides.length && stepSlides(dt)) active = true;
+  if (scoop.update(dt)) active = true;
   let awake = tools.state === 'hold';
   if (!awake) for (const p of pieces.list) if (!p.body.isSleeping()) {
     awake = true;
@@ -840,7 +703,7 @@ function frame(now) {
   }
 }
 
-await head.load(L.head).catch((e) => console.error('[head] load failed', e));
+await Promise.all([head.load(L.head).catch((e) => console.error('[head] load failed', e)), stage.loadEnv('assets/env/studio.hdr', 2.2, 0.75).catch((e) => console.error('[env] load failed', e))]);
 setView(PARAMS.get('view') === 'table' ? 'table' : 'wall');
 requestAnimationFrame(frame);
 
@@ -858,16 +721,14 @@ if (TEST) {
     PACKS,
     view: setView,
     focus: (i) => setView('focus', wall.bins[i]),
-    pour: (n = 6, cell) => {
-      if (cell !== undefined) setCell(cell, false);
-      for (let i = 0; i < n; i++) spawnIntoCell(game.bin.def, wall.takeOne(game.bin), game.cell, 6 + i * 2.2);
-    },
-    fill: (ids) => {
+    scoop,
+    fill: (ids, amount = 0.5) => {
       ids.forEach((id, i) => {
         const def = CANDIES.find((d) => d.id === id) || CANDIES[i % CANDIES.length];
         const prep = prepare(def, 0);
-        const n = clamp(Math.round(60 / (prep.size.x * prep.size.y * prep.size.z)), 1, 7);
-        for (let k = 0; k < n; k++) spawnIntoCell(def, k % (def.variants || 1), i, 3 + k * 2.4);
+        const cell = (i + 1) % 9;
+        const n = clamp(Math.round((tray.cells[cell].capacity * 0.56 * amount) / Math.max(0.5, prep.volume)), 1, 90);
+        for (let k = 0; k < n; k++) spawnIntoCell(def, k % (def.variants || 1), cell, 2 + k * 0.9);
       });
     },
     drop: (id, v = 0, x = L.work.x, z = L.work.z, y = 5) => {

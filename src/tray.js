@@ -1,8 +1,7 @@
-// Candy Wall: the clear divided plastic tray (model, clear-plastic material, colliders, compartments).
+// Candy Wall: the white flower tray (centre bowl and eight petal compartments, SDF model, trimesh collider) and the clear-plastic material.
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { TRAY } from './config.js';
-import { roundedRectShape } from './util.js';
+import { RAPIER, GROUP } from './physics.js';
+import { meshSDF } from './lib/geo.js';
 
 export function clearPlastic(opt = {}) {
   const m = new THREE.MeshPhysicalMaterial({
@@ -27,7 +26,7 @@ export function clearPlastic(opt = {}) {
         '#include <opaque_fragment>',
         `float pF = pow(1.0 - clamp(abs(dot(normalize(normal), normalize(vViewPosition))), 0.0, 1.0), 2.4);
         float pL = dot(outgoingLight, vec3(0.3, 0.5, 0.2));
-        outgoingLight += vec3(0.5, 0.56, 0.66) * pF * 0.35;
+        outgoingLight = min(outgoingLight, vec3(0.9)) + vec3(0.5, 0.56, 0.66) * pF * 0.35;
         diffuseColor.a = clamp(uBase + pF * uEdge + pL * uShine, 0.0, 1.0);
         #include <opaque_fragment>`
       );
@@ -36,91 +35,133 @@ export function clearPlastic(opt = {}) {
   return m;
 }
 
+const H = 4.2;
+const FLOOR = 0.5;
+const R0 = 5.3;
+const P1 = { c: 9.5, r: 3.25 };
+const P2 = { c: 13.2, r: 4.2 };
+const WALLT = 0.6;
+const OUTER = P2.c + P2.r + WALLT;
+const SECTOR = Math.PI / 4;
+
+function smin(a, b, k) {
+  const h = Math.max(k - Math.abs(a - b), 0) / k;
+  return Math.min(a, b) - h * h * k * 0.25;
+}
+
+function petal(x, z, s) {
+  const c = Math.cos(s * SECTOR);
+  const n = Math.sin(s * SECTOR);
+  const u = c * x + n * z;
+  const v = -n * x + c * z;
+  return smin(Math.hypot(u - P1.c, v) - P1.r, Math.hypot(u - P2.c, v) - P2.r, 2.6);
+}
+
+function cavity2(x, z) {
+  const s = Math.round(Math.atan2(z, x) / SECTOR);
+  return Math.min(Math.hypot(x, z) - R0, petal(x, z, s));
+}
+
+function body2(x, z) {
+  const s = Math.round(Math.atan2(z, x) / SECTOR);
+  let d = petal(x, z, s);
+  d = smin(d, petal(x, z, s - 1), 1.6);
+  d = smin(d, petal(x, z, s + 1), 1.6);
+  d = smin(d, Math.hypot(x, z) - R0, 1.2);
+  return d - WALLT;
+}
+
+function traySDF(x, y, z) {
+  const b = body2(x, z) + 0.35;
+  const w = Math.abs(y - H / 2) - H / 2 + 0.35;
+  const body = Math.min(Math.max(b, w), 0) + Math.hypot(Math.max(b, 0), Math.max(w, 0)) - 0.35;
+  const c = cavity2(x, z) + 0.1 * (H - y);
+  const f = FLOOR - y;
+  const k = 1.5;
+  const hh = Math.max(k - Math.abs(c - f), 0) / k;
+  const cav = Math.max(c, f) + hh * hh * k * 0.25;
+  return Math.max(body, -cav);
+}
+
+function buildGeometry(res) {
+  const e = OUTER + 0.5;
+  const g = meshSDF(traySDF, { min: [-e, -0.3, -e], max: [e, H + 0.3, e], res });
+  return g;
+}
+
 export class Tray {
   constructor(physics, home) {
     this.home = home.clone();
+    this.depth = H;
+    this.floorY = FLOOR;
+    this.radius = OUTER;
     this.group = new THREE.Group();
     this.inner = new THREE.Group();
-    this.inner.position.copy(home);
+    this.inner.position.copy(home).multiplyScalar(-1);
     this.group.add(this.inner);
-    const { cols, rows, cell, wall, depth } = TRAY;
-    this.w = cols * cell + wall;
-    this.d = rows * cell + wall;
-    this.depth = depth;
-    this.floorY = 0.3;
-    const parts = [];
-    const box = (w, h, d, x, y, z) => {
-      const g = new THREE.BoxGeometry(w, h, d);
-      g.translate(x, y, z);
-      parts.push(g);
-    };
-    const base = new THREE.ExtrudeGeometry(roundedRectShape(this.w + 1.2, this.d + 1.2, 1.4), { depth: this.floorY, bevelEnabled: false, curveSegments: 6 });
-    base.rotateX(-Math.PI / 2);
-    base.translate(0, 0, 0);
-    parts.push(base);
-    for (let i = 0; i <= cols; i++) box(wall, depth, this.d, -this.w / 2 + wall / 2 + i * cell, this.floorY + depth / 2, 0);
-    for (let j = 0; j <= rows; j++) box(this.w, depth, wall, 0, this.floorY + depth / 2, -this.d / 2 + wall / 2 + j * cell);
-    const geo = mergeGeometries(parts.map((g) => (g.index ? g.toNonIndexed() : g)));
-    const mesh = new THREE.Mesh(geo, clearPlastic({ base: 0.045, edge: 0.4 }));
-    mesh.renderOrder = 6;
-    this.inner.add(mesh);
-    const rim = [];
-    const strip = (w, d, x, z) => {
-      const g = new THREE.PlaneGeometry(w, d);
-      g.rotateX(-Math.PI / 2);
-      g.translate(x, this.floorY + depth + 0.005, z);
-      rim.push(g);
-    };
-    for (let i = 0; i <= cols; i++) strip(wall, this.d, -this.w / 2 + wall / 2 + i * cell, 0);
-    for (let j = 0; j <= rows; j++) strip(this.w, wall, 0, -this.d / 2 + wall / 2 + j * cell);
-    const rimMesh = new THREE.Mesh(mergeGeometries(rim), new THREE.MeshBasicMaterial({ color: 0xdfe9ff, transparent: true, opacity: 0.42, blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: false }));
-    rimMesh.renderOrder = 7;
-    this.inner.add(rimMesh);
-    const shadow = new THREE.Mesh(new THREE.PlaneGeometry(this.w + 5, this.d + 5), new THREE.MeshBasicMaterial({ map: softShadowTexture(), transparent: true, opacity: 0.55, depthWrite: false }));
+    this.group.position.copy(home);
+    const geo = buildGeometry(150);
+    const mesh = new THREE.Mesh(geo, new THREE.MeshPhysicalMaterial({ color: 0xd9d9d5, roughness: 0.32, metalness: 0, clearcoat: 0.5, clearcoatRoughness: 0.2, specularIntensity: 0.6 }));
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    this.mesh = mesh;
+    this.group.add(mesh);
+    const shadow = new THREE.Mesh(new THREE.PlaneGeometry(OUTER * 2 + 8, OUTER * 2 + 8), new THREE.MeshBasicMaterial({ map: softShadowTexture(), transparent: true, opacity: 0.6, depthWrite: false }));
     shadow.rotation.x = -Math.PI / 2;
     shadow.position.y = 0.012;
     shadow.renderOrder = 1;
-    this.inner.add(shadow);
+    this.group.add(shadow);
 
-    this.cells = [];
-    for (let j = 0; j < rows; j++)
-      for (let i = 0; i < cols; i++) {
-        this.cells.push({ index: j * cols + i, x: home.x - this.w / 2 + wall + (i + 0.5) * cell - wall / 2, z: home.z - this.d / 2 + wall + (j + 0.5) * cell - wall / 2, half: (cell - wall) / 2, candy: null, count: 0 });
-      }
-    const hx = home.x;
-    const hz = home.z;
-    const hy = home.y;
-    physics.fixedBox(hx, hy + this.floorY / 2, hz, this.w / 2 + 0.6, this.floorY / 2, this.d / 2 + 0.6, { friction: 0.5 });
-    const ph = (depth + 0.4) / 2;
-    for (let i = 0; i <= cols; i++) {
-      const edge = i === 0 || i === cols;
-      const t = edge ? 0.5 : wall / 2;
-      const off = edge ? (i === 0 ? -1 : 1) * (0.5 - wall / 2) : 0;
-      physics.fixedBox(hx - this.w / 2 + wall / 2 + i * cell + off, hy + this.floorY + ph - 0.2, hz, t, ph, this.d / 2, { friction: 0.35 });
+    const col = buildGeometry(84);
+    const verts = new Float32Array(col.attributes.position.array);
+    for (let i = 0; i < verts.length; i += 3) {
+      verts[i] += home.x;
+      verts[i + 1] += home.y;
+      verts[i + 2] += home.z;
     }
-    for (let j = 0; j <= rows; j++) {
-      const edge = j === 0 || j === rows;
-      const t = edge ? 0.5 : wall / 2;
-      const off = edge ? (j === 0 ? -1 : 1) * (0.5 - wall / 2) : 0;
-      physics.fixedBox(hx, hy + this.floorY + ph - 0.2, hz - this.d / 2 + wall / 2 + j * cell + off, this.w / 2, ph, t, { friction: 0.35 });
+    const cd = RAPIER.ColliderDesc.trimesh(verts, new Uint32Array(col.index.array)).setFriction(0.4).setRestitution(0.12).setCollisionGroups(GROUP.world);
+    physics.world.createCollider(cd);
+    col.dispose();
+
+    this.cells = [{ index: 0, x: home.x, z: home.z, r: R0, capacity: Math.PI * R0 * R0 * (H - FLOOR) * 0.86, angle: 0, radial: 0 }];
+    const pr = (P1.c * 0.42 + P2.c * 0.58);
+    for (let i = 0; i < 8; i++) {
+      const a = i * SECTOR;
+      this.cells.push({ index: i + 1, x: home.x + Math.cos(a) * pr, z: home.z + Math.sin(a) * pr, r: 3.6, capacity: (Math.PI * P1.r * P1.r + Math.PI * P2.r * P2.r) * 0.9 * (H - FLOOR) * 0.86, angle: a, radial: pr });
     }
     this.offset = new THREE.Vector3();
+    this.angle = 0;
+    this.matrix = new THREE.Matrix4();
+    this.inverse = new THREE.Matrix4();
+    this.setPose(this.offset, 0);
   }
 
   cellAt(x, z) {
-    for (const c of this.cells) if (Math.abs(x - c.x) <= c.half + TRAY.wall && Math.abs(z - c.z) <= c.half + TRAY.wall) return c;
-    return null;
+    const dx = x - this.home.x;
+    const dz = z - this.home.z;
+    const r = Math.hypot(dx, dz);
+    if (r < R0 + WALLT * 0.5) return this.cells[0];
+    if (r > OUTER) return null;
+    const s = ((Math.round(Math.atan2(dz, dx) / SECTOR) % 8) + 8) % 8;
+    return this.cells[s + 1];
   }
 
   contains(x, y, z, pad = 0) {
-    return Math.abs(x - this.home.x) < this.w / 2 + pad && Math.abs(z - this.home.z) < this.d / 2 + pad && y < this.home.y + this.depth + 6;
+    return Math.hypot(x - this.home.x, z - this.home.z) < OUTER + pad && y < this.home.y + H + 7;
   }
 
-  setOffset(v) {
-    this.offset.copy(v);
-    this.group.position.copy(v);
+  setPose(offset, angle) {
+    this.offset.copy(offset);
+    this.angle = angle;
+    this.group.position.copy(this.home).add(offset);
+    this.group.rotation.y = angle;
+    this.group.updateMatrix();
+    this.matrix.copy(this.group.matrix).multiply(_t.makeTranslation(-this.home.x, -this.home.y, -this.home.z));
+    this.inverse.copy(this.matrix).invert();
   }
 }
+
+const _t = new THREE.Matrix4();
 
 let shadowTex = null;
 function softShadowTexture() {
@@ -129,18 +170,11 @@ function softShadowTexture() {
   const cv = document.createElement('canvas');
   cv.width = cv.height = s;
   const ctx = cv.getContext('2d');
-  const img = ctx.createImageData(s, s);
-  for (let y = 0; y < s; y++)
-    for (let x = 0; x < s; x++) {
-      const dx = Math.max(0, Math.abs(x - s / 2) - s * 0.34) / (s * 0.16);
-      const dy = Math.max(0, Math.abs(y - s / 2) - s * 0.34) / (s * 0.16);
-      const d = Math.min(1, Math.hypot(dx, dy));
-      const a = (1 - d) * (1 - d);
-      const i = (y * s + x) * 4;
-      img.data[i] = img.data[i + 1] = img.data[i + 2] = 0;
-      img.data[i + 3] = a * 255;
-    }
-  ctx.putImageData(img, 0, 0);
+  const g = ctx.createRadialGradient(s / 2, s / 2, s * 0.28, s / 2, s / 2, s * 0.5);
+  g.addColorStop(0, 'rgba(0,0,0,1)');
+  g.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, s, s);
   shadowTex = new THREE.CanvasTexture(cv);
   return shadowTex;
 }

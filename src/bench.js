@@ -176,6 +176,14 @@ function frame(target, span) {
   stage.key.position.set(target.x - 28, target.y + 120, target.z + 46);
 }
 
+if (q.get('env')) {
+  await stage.loadEnv('Niepotrzebne/hdri/' + q.get('env') + '_1k.hdr', +(q.get('envrot') || 0), +(q.get('envint') || 1));
+  if (q.get('tone') === 'aces') renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  if (q.get('tone') === 'agx') renderer.toneMapping = THREE.AgXToneMapping;
+  if (q.get('exp')) renderer.toneMappingExposure = +q.get('exp');
+  if (q.get('key')) stage.key.intensity = +q.get('key');
+  if (q.get('back')) stage.back.intensity = +q.get('back');
+}
 const one = q.get('id') ? list.find((d) => d.id === q.get('id')) : null;
 try {
   if (q.get('id') && !one) info.textContent = `no candy "${q.get('id')}" in pack ${packName}`;

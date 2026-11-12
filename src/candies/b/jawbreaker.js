@@ -4,9 +4,12 @@ import { M, ball, glsl } from './_shared.js';
 const R = 1.55;
 const RINGS = [0xff5fa2, 0xffe14a, 0x4bd16a, 0x49a8ff, 0xff9a3c, 0xfdfbf4];
 const KINDS = [
-  { name: 'White Jawbreaker', shell: 0xf7f3ea, shift: 0 },
-  { name: 'Yellow Jawbreaker', shell: 0xffe36a, shift: 2 },
-  { name: 'Blue Jawbreaker', shell: 0x7cc4ff, shift: 4 },
+  { name: 'White Jawbreaker', shell: 0xf4f0e6, shift: 0 },
+  { name: 'Yellow Jawbreaker', shell: 0xffd21f, shift: 2 },
+  { name: 'Blue Jawbreaker', shell: 0x1b86e6, shift: 4 },
+  { name: 'Orange Jawbreaker', shell: 0xff7416, shift: 1 },
+  { name: 'Green Jawbreaker', shell: 0x2fbf45, shift: 3 },
+  { name: 'Red Jawbreaker', shell: 0xe3223b, shift: 5 },
 ];
 
 export default {
@@ -23,14 +26,18 @@ export default {
     const k = KINDS[v];
     const g = ball(R, 40, 24);
     const speck = `vec3 candyPattern(vec3 p, vec3 base) {
-  vec3 pal[5] = vec3[5](${[0xff3d6e, 0x2f8fff, 0xffc21a, 0x35c25a, 0xa14dff].map(glsl).join(', ')});
+  vec3 pal[6] = vec3[6](${[0xe8203f, 0x1f7fe6, 0xffcf1a, 0x2fb84a, 0xff6f1a, 0xf6f2e8].map(glsl).join(', ')});
   vec3 c = base;
-  for (int i = 0; i < 2; i++) {
-    vec3 q = p * (i == 0 ? 2.9 : 5.1) + float(i) * 7.7;
+  vec3 w = p + 0.2 * vec3(cNoise(p * 3.3), cNoise(p * 3.3 + 9.0), cNoise(p * 3.3 + 17.0));
+  for (int i = 0; i < 3; i++) {
+    float sc = i == 0 ? 1.2 : (i == 1 ? 2.4 : 5.6);
+    vec3 q = w * sc + float(i) * 13.7 + ${(v * 3.1).toFixed(1)};
     vec3 ci = floor(q);
-    float d = length(fract(q) - 0.5 - (cHash3(ci) - 0.5) * 0.5);
-    float rad = 0.1 + 0.22 * cHash1(ci + 2.0);
-    c = mix(c, pal[int(cHash1(ci + 5.0) * 4.99)], smoothstep(rad, rad - 0.03, d));
+    vec3 f = fract(q) - 0.5 - (cHash3(ci) - 0.5) * 0.6;
+    float keep = step(i == 0 ? 0.5 : (i == 1 ? 0.48 : 0.6), cHash1(ci + 4.0));
+    float rad = (i == 0 ? 0.36 : 0.27) * (0.55 + 0.65 * cHash1(ci + 2.0));
+    float d = length(f * vec3(1.0, 1.0 + 0.9 * (cHash1(ci + 8.0) - 0.5), 1.0));
+    c = mix(c, pal[int(cHash1(ci + 5.0) * 5.99)], keep * smoothstep(rad, rad - 0.03, d));
   }
   return c;
 }`;
@@ -45,7 +52,7 @@ export default {
 }`;
     return {
       name: k.name,
-      layers: [{ geometry: g, material: M.shell({ color: k.shell, gloss: 0.85, pattern: speck }), cap: M.hard({ color: k.shell, clarity: 0.15, opaque: true, pattern: rings }) }],
+      layers: [{ geometry: g, material: M.shell({ color: k.shell, gloss: 0.95, pattern: speck }), cap: M.hard({ color: k.shell, clarity: 0.15, opaque: true, pattern: rings }) }],
     };
   },
 };

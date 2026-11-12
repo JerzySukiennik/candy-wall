@@ -251,5 +251,55 @@
    "whoosh2.mp3"
   ]
  },
- "voice": {}
+ "voice": {
+  "bitter": [
+   "bitter1.mp3",
+   "bitter2.mp3"
+  ],
+  "fizz": [
+   "fizz1.mp3",
+   "fizz2.mp3"
+  ],
+  "hard": [
+   "hard1.mp3",
+   "hard2.mp3"
+  ],
+  "liquid": [
+   "liquid1.mp3",
+   "liquid2.mp3"
+  ],
+  "mint": [
+   "mint1.mp3",
+   "mint2.mp3"
+  ],
+  "more": [
+   "more1.mp3",
+   "more2.mp3",
+   "more3.mp3"
+  ],
+  "salty": [
+   "salty1.mp3",
+   "salty2.mp3"
+  ],
+  "sour": [
+   "sour1.mp3",
+   "sour2.mp3",
+   "sour3.mp3"
+  ],
+  "spicy": [
+   "spicy1.mp3",
+   "spicy2.mp3",
+   "spicy3.mp3"
+  ],
+  "spicy_max": [
+   "spicy_max1.mp3",
+   "spicy_max2.mp3"
+  ],
+  "sweet": [
+   "sweet1.mp3",
+   "sweet2.mp3",
+   "sweet3.mp3",
+   "sweet4.mp3"
+  ]
+ }
 }

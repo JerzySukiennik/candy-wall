@@ -1,6 +1,11 @@
 // Candy Wall: renderer, dark ASMR studio lighting, framed camera rigs and screen/world helpers.
 import * as THREE from 'three';
-import { BG, IS_TOUCH } from './config.js';
+import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+import { BG, IS_TOUCH, PARAMS } from './config.js';
 import { ease, lerp } from './util.js';
 
 export class Stage {
@@ -18,10 +23,10 @@ export class Stage {
     this.scene.environment = this.buildStudio(r);
     this.scene.environmentIntensity = 0.85;
 
-    const back = (this.back = new THREE.DirectionalLight(0xdfe8ff, 1.5));
+    const back = (this.back = new THREE.DirectionalLight(0xdfe8ff, 1.1));
     back.position.set(10, 150, -70);
     this.scene.add(back, back.target);
-    const key = (this.key = new THREE.DirectionalLight(0xfff4e6, 2.6));
+    const key = (this.key = new THREE.DirectionalLight(0xfff4e6, 2.9));
     key.position.set(-28, 120, 46);
     key.castShadow = true;
     const s = key.shadow;
@@ -38,10 +43,20 @@ export class Stage {
     s.radius = 4;
     s.blurSamples = IS_TOUCH ? 8 : 12;
     this.scene.add(key, key.target);
-    this.scene.add(new THREE.HemisphereLight(0xcfd6e6, 0x0a0a0c, 0.32));
+    this.scene.add(new THREE.HemisphereLight(0xcfd6e6, 0x0a0a0c, 0.12));
     const fill = new THREE.DirectionalLight(0xffeedd, 0.55);
     fill.position.set(30, 30, 90);
     this.scene.add(fill);
+
+    this.composer = null;
+    if (!IS_TOUCH && PARAMS.get('bloom') !== '0') {
+      const rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, samples: 4 });
+      const c = (this.composer = new EffectComposer(r, rt));
+      c.addPass(new RenderPass(this.scene, this.camera));
+      this.bloom = new UnrealBloomPass(new THREE.Vector2(4, 4), 0.16, 0.5, 1.7);
+      c.addPass(this.bloom);
+      c.addPass(new OutputPass());
+    }
 
     this.raycaster = new THREE.Raycaster();
     this.ndc = new THREE.Vector2();
@@ -75,6 +90,35 @@ export class Stage {
     const tex = pm.fromScene(s, 0.012, 1, 300).texture;
     pm.dispose();
     return tex;
+  }
+
+  async loadEnv(url, rotY = 0, intensity = 1) {
+    const tex = await new RGBELoader().loadAsync(url);
+    tex.mapping = THREE.EquirectangularReflectionMapping;
+    const pm = new THREE.PMREMGenerator(this.renderer);
+    const env = pm.fromEquirectangular(tex).texture;
+    pm.dispose();
+    tex.dispose();
+    this.scene.environment = env;
+    this.scene.environmentRotation.set(0, rotY, 0);
+    this.scene.environmentIntensity = intensity;
+    return env;
+  }
+
+  focusShadow(x, y, z, half) {
+    const k = this.key;
+    k.target.position.set(x, y, z);
+    k.position.set(x - 26, y + 112, z + 52);
+    const c = k.shadow.camera;
+    c.left = -half;
+    c.right = half;
+    c.top = half;
+    c.bottom = -half;
+    c.near = 40;
+    c.far = 260;
+    c.updateProjectionMatrix();
+    k.target.updateMatrixWorld();
+    k.shadow.needsUpdate = true;
   }
 
   setRig(g, dur = 1.1) {
@@ -157,6 +201,10 @@ export class Stage {
     this.h = h;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, IS_TOUCH ? 2 : 1.75));
     this.renderer.setSize(w, h, false);
+    if (this.composer) {
+      this.composer.setPixelRatio(this.renderer.getPixelRatio());
+      this.composer.setSize(w, h);
+    }
     this.camera.aspect = w / h;
     this.place();
   }
@@ -175,6 +223,7 @@ export class Stage {
   }
 
   render() {
-    this.renderer.render(this.scene, this.camera);
+    if (this.composer) this.composer.render();
+    else this.renderer.render(this.scene, this.camera);
   }
 }

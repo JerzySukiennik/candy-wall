@@ -36,22 +36,22 @@ const KINDS = {
   gummy: (o) => {
     const c = sat(o.clarity ?? 0.6);
     const g = sat(o.gloss ?? 0.75);
-    return { roughness: lerp(0.5, 0.14, g), clearcoat: g, clearcoatRoughness: 0.16, glow: 0.16 + 0.5 * c, core: lerp(0.8, 0.3, c), back: 0.35 + 1.1 * c, fres: 1.7, alpha: c > 0.6 ? lerp(0.92, 0.3, (c - 0.6) / 0.4) : 1, spec: 1 };
+    return { roughness: lerp(0.5, 0.12, g), clearcoat: g, clearcoatRoughness: 0.12, glow: 0.05 + 0.3 * c, core: lerp(0.8, 0.3, c), back: 0.5 + 1.6 * c, fres: 1.7, alpha: c > 0.6 ? lerp(0.92, 0.3, (c - 0.6) / 0.4) : 1, spec: 1 };
   },
   hard: (o) => {
     const c = sat(o.clarity ?? 0.75);
-    return { roughness: 0.05, clearcoat: 1, clearcoatRoughness: 0.03, glow: 0.14 + 0.5 * c, core: lerp(0.85, 0.35, c), back: 0.4 + 1.3 * c, fres: 2.2, alpha: c > 0.6 ? lerp(0.95, 0.34, (c - 0.6) / 0.4) : 1, spec: 1 };
+    return { roughness: 0.05, clearcoat: 1, clearcoatRoughness: 0.03, glow: 0.03 + 0.3 * c, core: lerp(0.85, 0.35, c), back: 0.5 + 1.6 * c, fres: 2.2, alpha: c > 0.6 ? lerp(0.95, 0.34, (c - 0.6) / 0.4) : 1, spec: 1 };
   },
-  shell: (o) => ({ roughness: lerp(0.4, 0.12, sat(o.gloss ?? 0.8)), clearcoat: 0.7, clearcoatRoughness: 0.1, glow: 0.05, core: 1, back: 0.05, fres: 2, alpha: 1, spec: 1 }),
+  shell: (o) => ({ roughness: lerp(0.4, 0.12, sat(o.gloss ?? 0.8)), clearcoat: 1, clearcoatRoughness: 0.06, glow: 0, core: 1, back: 0, fres: 2, alpha: 1, spec: 1 }),
   chocolate: (o) => ({ roughness: lerp(0.62, 0.3, sat(o.gloss ?? 0.5)), clearcoat: 0.12, clearcoatRoughness: 0.4, glow: 0.015, core: 1, back: 0, fres: 2, alpha: 1, spec: 0.55, sheen: 0.25 }),
-  foam: () => ({ roughness: 0.92, clearcoat: 0, clearcoatRoughness: 0, glow: 0.1, core: 0.9, back: 0.25, fres: 1.2, alpha: 1, spec: 0.25, sheen: 0.7 }),
-  crisp: () => ({ roughness: 0.86, clearcoat: 0, clearcoatRoughness: 0, glow: 0.03, core: 1, back: 0.12, fres: 2, alpha: 1, spec: 0.35 }),
-  cream: () => ({ roughness: 0.55, clearcoat: 0.1, clearcoatRoughness: 0.5, glow: 0.06, core: 1, back: 0.1, fres: 2, alpha: 1, spec: 0.5, sheen: 0.3 }),
+  foam: () => ({ roughness: 0.92, clearcoat: 0, clearcoatRoughness: 0, glow: 0.03, core: 0.9, back: 0.3, fres: 1.2, alpha: 1, spec: 0.25, sheen: 0.7 }),
+  crisp: () => ({ roughness: 0.86, clearcoat: 0, clearcoatRoughness: 0, glow: 0, core: 1, back: 0.12, fres: 2, alpha: 1, spec: 0.35 }),
+  cream: () => ({ roughness: 0.55, clearcoat: 0.1, clearcoatRoughness: 0.5, glow: 0.01, core: 1, back: 0.1, fres: 2, alpha: 1, spec: 0.5, sheen: 0.3 }),
   liquid: (o) => {
     const c = sat(o.clarity ?? 0.6);
-    return { roughness: 0.03, clearcoat: 1, clearcoatRoughness: 0.02, glow: 0.3 + 0.45 * c, core: lerp(0.9, 0.5, c), back: 0.5 + c, fres: 1.4, alpha: 1, spec: 1 };
+    return { roughness: 0.03, clearcoat: 1, clearcoatRoughness: 0.02, glow: 0.14 + 0.3 * c, core: lerp(0.9, 0.5, c), back: 0.5 + c, fres: 1.4, alpha: 1, spec: 1 };
   },
-  wax: () => ({ roughness: 0.42, clearcoat: 0.2, clearcoatRoughness: 0.4, glow: 0.2, core: 0.7, back: 0.5, fres: 1.4, alpha: 1, spec: 0.6 }),
+  wax: () => ({ roughness: 0.42, clearcoat: 0.2, clearcoatRoughness: 0.4, glow: 0.07, core: 0.7, back: 0.5, fres: 1.4, alpha: 1, spec: 0.6 }),
   matte: (o) => ({ roughness: o.roughness ?? 0.82, clearcoat: 0, clearcoatRoughness: 0, glow: 0.01, core: 1, back: 0, fres: 2, alpha: 1, spec: 0.3 }),
   foil: (o) => ({ roughness: o.roughness ?? 0.24, clearcoat: 0, clearcoatRoughness: 0, glow: 0, core: 1, back: 0, fres: 2, alpha: 1, spec: 1, metal: 1 }),
 };
@@ -159,7 +159,7 @@ function make(kind, o = {}) {
           #if NUM_DIR_LIGHTS > 0
             vec3 cL = directionalLights[0].direction;
             float cBack = pow(clamp(dot(cV, -normalize(cL + normal * 0.4)), 0.0, 1.0), 2.5);
-            totalEmissiveRadiance += diffuseColor.rgb * directionalLights[0].color * cBack * uBack * 0.12;
+            totalEmissiveRadiance += diffuseColor.rgb * directionalLights[0].color * cBack * uBack * 0.16;
           #endif
           ${clear ? 'diffuseColor.a *= mix(uAlpha, 1.0, fres);' : ''}
         }`
