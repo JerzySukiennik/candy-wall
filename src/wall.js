@@ -1,8 +1,9 @@
-// Candy Wall: the wall of stacked acrylic bins with hinged slanted lids: candy piles (instanced, two detail levels, baked or loose), labels, scooping out and the focus veil.
+// Candy Wall: the wall of stacked acrylic bins with hinged slanted lids: candy piles (instanced, two detail levels swapped one variant per frame, baked or loose), labels, scooping out and the focus veil.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { BIN, BINBOX, IS_TOUCH, WALL } from './config.js';
 import { ensureRest, setDetail } from './lib/geo.js';
+import { prepare } from './candy.js';
 import { clearPlastic } from './tray.js';
 import { clamp, damp, hashStr, rng } from './util.js';
 
@@ -311,7 +312,7 @@ export class Wall {
     bin.loose = !!pile.loose;
     bin.tris1 = t03 / 0.09;
     const farDetail = clamp(0.3 * Math.sqrt(FAR_BUDGET / (pile.n * t03)), 0.14, 0.5);
-    bin.nearDetail = clamp(Math.sqrt(NEAR_BUDGET / (pile.n * bin.tris1)), 0.3, 1.25);
+    bin.nearDetail = clamp(Math.sqrt(NEAR_BUDGET / (pile.n * bin.tris1)), 0.3, 1);
     const perV = [];
     for (let v = 0; v < nv; v++) perV.push([]);
     for (let i = 0; i < pile.n; i++) {
@@ -343,7 +344,7 @@ export class Wall {
         this.group.add(im);
         meshes.push(im);
       }
-      bin.sets.push({ meshes, far: far.layers.map((l) => l.geometry), near: null });
+      bin.sets.push({ meshes, far: far.layers.map((l) => l.geometry), near: null, on: false });
       list.forEach((p, i) => this.placeInstance(bin, v, i, p));
       for (const im of meshes) {
         im.instanceMatrix.needsUpdate = true;
@@ -367,17 +368,30 @@ export class Wall {
   setNear(bin, on) {
     if (!bin || !bin.ready || bin.near === on) return;
     bin.near = on;
-    const nv = bin.def.variants || 1;
-    for (let v = 0; v < nv; v++) {
-      const set = bin.sets[v];
-      if (!set) continue;
-      if (on && !set.near) set.near = lodBuild(bin.def, v, bin.nearDetail).layers.map((l) => l.geometry);
+    if (on) return;
+    for (const set of bin.sets) {
+      if (!set || !set.on) continue;
+      set.on = false;
       set.meshes.forEach((im, i) => {
-        im.geometry = on ? set.near[i] || set.far[i] : set.far[i];
-        im.castShadow = on;
-        im.receiveShadow = on;
+        im.geometry = set.far[i];
+        im.castShadow = false;
+        im.receiveShadow = false;
       });
     }
+  }
+
+  nearStep(bin) {
+    const v = bin.sets.findIndex((set) => set && !set.on);
+    if (v < 0) return false;
+    const set = bin.sets[v];
+    if (!set.near) set.near = bin.nearDetail >= 0.9 ? prepare(bin.def, v).layers.map((l) => l.geometry) : lodBuild(bin.def, v, bin.nearDetail).layers.map((l) => l.geometry);
+    set.on = true;
+    set.meshes.forEach((im, i) => {
+      im.geometry = set.near[i] || set.far[i];
+      im.castShadow = true;
+      im.receiveShadow = true;
+    });
+    return true;
   }
 
   scoopOut(bin, wx, wz, n) {
@@ -511,6 +525,9 @@ export class Wall {
       moving = true;
     }
     if (this.building) moving = true;
+    const f = this.focused;
+    this.busy = !!(f && f.near && this.nearStep(f));
+    if (this.busy) moving = true;
     const vm = this.veil.material;
     if (Math.abs(vm.opacity - this.veilT) > 0.004) {
       vm.opacity = damp(vm.opacity, this.veilT, 7, dt);

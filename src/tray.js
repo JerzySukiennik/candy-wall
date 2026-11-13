@@ -1,4 +1,4 @@
-// Candy Wall: the white flower tray (centre bowl and eight petal compartments, SDF model, trimesh collider) and the clear-plastic material.
+// Candy Wall: the white flower tray (centre bowl and eight petal compartments, SDF model, collider built only from boxes: wall segments around every compartment over a floor of strips) and the clear-plastic material.
 import * as THREE from 'three';
 import { RAPIER, GROUP } from './physics.js';
 import { meshSDF } from './lib/geo.js';
@@ -89,6 +89,67 @@ function buildGeometry(res) {
   return g;
 }
 
+function outline(f, cx, cz, n, rMax) {
+  const pts = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    let lo = rMax;
+    while (lo > 0 && f(cx + c * lo, cz + s * lo) > 0) lo -= 0.2;
+    let hi = lo + 0.2;
+    for (let k = 0; k < 16; k++) {
+      const m = (lo + hi) / 2;
+      if (f(cx + c * m, cz + s * m) > 0) hi = m;
+      else lo = m;
+    }
+    pts.push([cx + c * lo, cz + s * lo]);
+  }
+  return pts;
+}
+
+function buildCollider() {
+  const boxes = [];
+  const WALL = 1.2;
+  const cell = (f, cx, cz, n, rMax) => {
+    const pts = outline((x, z) => f(x, z) + 0.28, cx, cz, n, rMax);
+    for (let i = 0; i < n; i++) {
+      const a = pts[i];
+      const b = pts[(i + 1) % n];
+      const dx = b[0] - a[0];
+      const dz = b[1] - a[1];
+      const len = Math.hypot(dx, dz);
+      let nx = dz / len;
+      let nz = -dx / len;
+      const mx = (a[0] + b[0]) / 2;
+      const mz = (a[1] + b[1]) / 2;
+      if (nx * (mx - cx) + nz * (mz - cz) < 0) {
+        nx = -nx;
+        nz = -nz;
+      }
+      boxes.push({ x: mx + (nx * WALL) / 2, y: H / 2, z: mz + (nz * WALL) / 2, hx: len / 2 + 0.24, hy: H / 2, hz: WALL / 2, yaw: Math.atan2(-dz, dx) });
+    }
+  };
+  cell((x, z) => Math.hypot(x, z) - R0, 0, 0, 20, R0 + 1);
+  const pc = (P1.c + P2.c) / 2;
+  for (let s = 0; s < 8; s++) cell((x, z) => petal(x, z, s), Math.cos(s * SECTOR) * pc, Math.sin(s * SECTOR) * pc, 22, 7.5);
+  const inside = (x, z) => cavity2(x, z) + 0.1 * (H - FLOOR) < 0;
+  const BAND = 1.2;
+  const DX = 0.15;
+  for (let z0 = -OUTER; z0 < OUTER; z0 += BAND) {
+    let start = null;
+    for (let x = -OUTER; x <= OUTER + DX; x += DX) {
+      const on = inside(x, z0) || inside(x, z0 + BAND / 2) || inside(x, z0 + BAND);
+      if (on && start === null) start = x - DX;
+      if (!on && start !== null) {
+        boxes.push({ x: (start + x) / 2, y: FLOOR - 1.75, z: z0 + BAND / 2, hx: (x - start) / 2, hy: 1.75, hz: BAND / 2, yaw: 0 });
+        start = null;
+      }
+    }
+  }
+  return boxes;
+}
+
 export class Tray {
   constructor(physics, home) {
     this.home = home.clone();
@@ -112,16 +173,18 @@ export class Tray {
     shadow.renderOrder = 1;
     this.group.add(shadow);
 
-    const col = buildGeometry(84);
-    const verts = new Float32Array(col.attributes.position.array);
-    for (let i = 0; i < verts.length; i += 3) {
-      verts[i] += home.x;
-      verts[i + 1] += home.y;
-      verts[i + 2] += home.z;
+    const boxes = buildCollider();
+    for (const o of boxes) {
+      const h = Math.sin(o.yaw / 2);
+      physics.world.createCollider(
+        RAPIER.ColliderDesc.cuboid(o.hx, o.hy, o.hz)
+          .setTranslation(home.x + o.x, home.y + o.y, home.z + o.z)
+          .setRotation({ x: 0, y: h, z: 0, w: Math.cos(o.yaw / 2) })
+          .setFriction(0.4)
+          .setRestitution(0.12)
+          .setCollisionGroups(GROUP.world)
+      );
     }
-    const cd = RAPIER.ColliderDesc.trimesh(verts, new Uint32Array(col.index.array)).setFriction(0.4).setRestitution(0.12).setCollisionGroups(GROUP.world);
-    physics.world.createCollider(cd);
-    col.dispose();
 
     this.cells = [{ index: 0, x: home.x, z: home.z, r: R0, capacity: Math.PI * R0 * R0 * (H - FLOOR) * 0.86, angle: 0, radial: 0 }];
     const pr = (P1.c * 0.42 + P2.c * 0.58);

@@ -1,4 +1,4 @@
-// Candy Wall: the iridescent metal scoop: model, digging into a bin, carrying a physically settled heap and pouring it out as real pieces.
+// Candy Wall: the iridescent metal scoop: model, digging into a bin, carrying a physically settled heap (simulated in slices) and pouring it out as real pieces.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { GROUP, RAPIER } from './physics.js';
@@ -14,6 +14,7 @@ const _p = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _s = new THREE.Vector3();
 const _v = new THREE.Vector3();
+const WHITE = new THREE.Color(1, 1, 1);
 const YAW = Math.PI + 0.3;
 const CARRY_PITCH = -0.15;
 const KEYS = [
@@ -48,7 +49,46 @@ function buildGeometry() {
   ring.rotateY(Math.PI / 2);
   ring.translate(b.x, b.y + 0.2, b.z - 0.95);
   for (const g of [handle, collar, cap, ring]) g.deleteAttribute('uv');
-  return { all: mergeGeometries([bowl, handle, collar, cap, ring]), bowl };
+  return mergeGeometries([bowl, handle, collar, cap, ring]);
+}
+
+function bowlCollider() {
+  const R = 3.0;
+  const SY = 0.92;
+  const CY = 0.25;
+  const Z0 = -3.9;
+  const A = 10;
+  const NP = 4;
+  const NZ = 4;
+  const verts = [0, SY * CY, Z0 - R];
+  const index = [];
+  const rings = [];
+  const ring = (f) => {
+    const start = verts.length / 3;
+    for (let i = 0; i <= A; i++) {
+      const phi = Math.PI + (i / A) * Math.PI;
+      verts.push(...f(Math.cos(phi), Math.sin(phi)));
+    }
+    rings.push(start);
+  };
+  for (let j = NP - 1; j >= 0; j--) {
+    const psi = ((j / NP) * Math.PI) / 2;
+    ring((c, s) => [R * c * Math.cos(psi), SY * (CY + R * s * Math.cos(psi)), Z0 - R * Math.sin(psi)]);
+  }
+  for (let j = 1; j <= NZ; j++)
+    ring((c, s) => {
+      const x = R * c;
+      const y = SY * (CY + R * s);
+      return [x, y, Z0 + ((5.0 - y * 0.14 - x * x * 0.13 - Z0) * j) / NZ];
+    });
+  for (let i = 0; i < A; i++) index.push(0, rings[0] + i, rings[0] + i + 1);
+  for (let r = 0; r + 1 < rings.length; r++)
+    for (let i = 0; i < A; i++) {
+      const a = rings[r] + i;
+      const b = rings[r + 1] + i;
+      index.push(a, b, b + 1, a, b + 1, a + 1);
+    }
+  return { verts: new Float32Array(verts), index: new Uint32Array(index) };
 }
 
 function rainbowMetal() {
@@ -71,18 +111,18 @@ function rainbowMetal() {
 export class Scoop {
   constructor(game) {
     this.game = game;
-    const g = buildGeometry();
     this.group = new THREE.Group();
     this.group.rotation.order = 'YXZ';
-    this.mesh = new THREE.Mesh(g.all, rainbowMetal());
+    this.mesh = new THREE.Mesh(buildGeometry(), rainbowMetal());
     this.mesh.castShadow = true;
     this.mesh.receiveShadow = true;
     this.group.add(this.mesh);
     this.group.visible = false;
     game.stage.scene.add(this.group);
-    this.bowlVerts = new Float32Array(g.bowl.attributes.position.array);
-    this.bowlIndex = new Uint32Array(g.bowl.index.array);
+    this.bowl = bowlCollider();
     this.cache = new Map();
+    this.job = null;
+    this.recent = [];
     this.bin = null;
     this.state = 'off';
     this.pos = new THREE.Vector3(0, 40, 0);
@@ -100,6 +140,7 @@ export class Scoop {
     this.loadedAt = 0;
     this.digFrom = { pos: new THREE.Vector3(), pitch: 0 };
     this.digPoint = new THREE.Vector3();
+    this.pourAt = new THREE.Vector3();
   }
 
   get loaded() {
@@ -122,7 +163,6 @@ export class Scoop {
       this.pos.y += 14;
       this.pitch = CARRY_PITCH;
     }
-    setTimeout(() => this.bin === bin && this.arrange(bin.def), 350);
   }
 
   restPoint(out) {
@@ -136,46 +176,84 @@ export class Scoop {
     return clamp(Math.round(Math.min(64 / Math.max(0.3, prep.volume), 150 / Math.max(0.5, box))), 1, 56);
   }
 
-  arrange(def) {
-    if (this.cache.has(def.id)) return this.cache.get(def.id);
-    const n = this.count(def);
-    const nv = def.variants || 1;
-    const world = new RAPIER.World({ x: 0, y: -981, z: -150 });
-    world.timestep = 1 / 120;
-    world.createCollider(RAPIER.ColliderDesc.trimesh(this.bowlVerts, this.bowlIndex).setFriction(0.55).setRestitution(0.02));
-    const bodies = [];
-    const prep0 = prepare(def, 0);
-    const sh0 = wholeShape(prep0, RAPIER);
-    const long = sh0.longest > 6.5;
-    const stepY = Math.max(0.5, sh0.thin * 0.8);
-    for (let i = 0; i < n; i++) {
-      const prep = prepare(def, i % nv);
-      const sh = wholeShape(prep, RAPIER);
-      const q = new THREE.Quaternion();
-      if (long) q.setFromEuler(new THREE.Euler(0, prep.size.x >= prep.size.z ? Math.PI / 2 : 0, 0)).premultiply(_q.setFromAxisAngle(_v.set(0, 0, 1), rand(-0.3, 0.3)));
-      else q.setFromEuler(new THREE.Euler(rand(6.28), rand(6.28), rand(6.28)));
-      const spread = Math.max(0, 2.3 - sh.longest * 0.35);
-      const bd = RAPIER.RigidBodyDesc.dynamic()
-        .setTranslation(rand(-spread, spread), 1.2 + i * stepY, long ? rand(0.5, 2) : rand(-3.2, 2.2))
-        .setRotation(q)
-        .setLinearDamping(1.5)
-        .setAngularDamping(3);
-      const body = world.createRigidBody(bd);
-      world.createCollider(sh.make().setMass(Math.max(0.2, prep.mass)).setFriction(0.7).setRestitution(0.02).setCollisionGroups(GROUP.piece), body);
-      bodies.push({ body, v: i % nv });
+  step(def, ms = 4) {
+    if (this.cache.has(def.id)) return true;
+    let j = this.job;
+    if (!j || j.def !== def) {
+      if (j && j.world) j.world.free();
+      j = this.job = { def, v: 0, world: null, bodies: [], steps: 0, long: false };
     }
-    for (let k = 0; k < 420; k++) world.step();
+    const nv = def.variants || 1;
+    if (j.v < nv * 2) {
+      const prep = prepare(def, j.v >> 1);
+      if (j.v & 1) wholeShape(prep, RAPIER);
+      j.v++;
+      return false;
+    }
+    if (!j.world) {
+      const n = this.count(def);
+      const world = (j.world = new RAPIER.World({ x: 0, y: -981, z: -150 }));
+      world.timestep = 1 / 120;
+      world.createCollider(RAPIER.ColliderDesc.trimesh(this.bowl.verts, this.bowl.index).setFriction(0.55).setRestitution(0.02));
+      const sh0 = wholeShape(prepare(def, 0), RAPIER);
+      const long = (j.long = sh0.longest > 6.5);
+      const stepY = Math.max(0.5, sh0.thin * 0.8);
+      for (let i = 0; i < n; i++) {
+        const prep = prepare(def, i % nv);
+        const sh = wholeShape(prep, RAPIER);
+        const q = new THREE.Quaternion();
+        if (long) q.setFromEuler(new THREE.Euler(0, prep.size.x >= prep.size.z ? Math.PI / 2 : 0, 0)).premultiply(_q.setFromAxisAngle(_v.set(0, 0, 1), rand(-0.3, 0.3)));
+        else q.setFromEuler(new THREE.Euler(rand(6.28), rand(6.28), rand(6.28)));
+        const spread = Math.max(0, 2.3 - sh.longest * 0.35);
+        const bd = RAPIER.RigidBodyDesc.dynamic()
+          .setTranslation(rand(-spread, spread), 1.2 + i * stepY, long ? rand(0.5, 2) : rand(-3.2, 2.2))
+          .setRotation(q)
+          .setLinearDamping(1.5)
+          .setAngularDamping(3);
+        const body = world.createRigidBody(bd);
+        world.createCollider(sh.make().setMass(Math.max(0.2, prep.mass)).setFriction(0.7).setRestitution(0.02).setCollisionGroups(GROUP.piece), body);
+        j.bodies.push({ body, v: i % nv });
+      }
+      j.wait = 60 + Math.round(Math.sqrt((2 * (1.2 + n * stepY)) / 981) * 150);
+      return false;
+    }
+    const t0 = performance.now();
+    let done = false;
+    do {
+      for (let k = 0; k < 3; k++) j.world.step();
+      j.steps += 3;
+      done = j.steps >= 420 || (j.steps >= j.wait && this.settled(j));
+    } while (!done && performance.now() - t0 < ms);
+    if (!done) return false;
     const items = [];
-    for (const b of bodies) {
+    for (const b of j.bodies) {
       const t = b.body.translation();
       const r = b.body.rotation();
-      if (t.y < -3.6 || t.y > 7 || Math.abs(t.x) > 3.8 || t.z < -7.6 || t.z > (long ? 9 : 6)) continue;
+      if (t.y < -3.6 || t.y > 7 || Math.abs(t.x) > 3.8 || t.z < -7.6 || t.z > (j.long ? 9 : 6)) continue;
       items.push({ v: b.v, pos: new THREE.Vector3(t.x, t.y, t.z), quat: new THREE.Quaternion(r.x, r.y, r.z, r.w) });
     }
-    world.free();
+    j.world.free();
+    this.job = null;
     if (!items.length) items.push({ v: 0, pos: new THREE.Vector3(0, -1.2, 0), quat: new THREE.Quaternion() });
     this.cache.set(def.id, items);
-    return items;
+    if (this.game.onWarm) this.game.onWarm(def);
+    return true;
+  }
+
+  settled(j) {
+    for (const b of j.bodies) {
+      const t = b.body.translation();
+      if (t.y < -8) continue;
+      const v = b.body.linvel();
+      const w = b.body.angvel();
+      if (v.x * v.x + v.y * v.y + v.z * v.z > 9 || w.x * w.x + w.y * w.y + w.z * w.z > 1.2) return false;
+    }
+    return true;
+  }
+
+  arrange(def) {
+    while (!this.step(def, 1e9)) {}
+    return this.cache.get(def.id);
   }
 
   load(def, variants) {
@@ -202,6 +280,7 @@ export class Scoop {
         im.castShadow = true;
         im.receiveShadow = true;
         if (l.material.transparent) im.renderOrder = 2;
+        for (let i = 0; i < set.list.length; i++) im.setColorAt(i, WHITE);
         this.group.add(im);
         return im;
       });
@@ -302,7 +381,6 @@ export class Scoop {
     this.t = 0;
     this.dug = false;
     this.game.onScoop('dig', this);
-    this.arrange(b.def);
     this.game.audio.play('knife_pick', { vol: 0.35, rate: 1.2 });
     return true;
   }
@@ -316,6 +394,7 @@ export class Scoop {
     }
     this.state = 'pour';
     this.t = 0;
+    this.pourAt.copy(this.pointerTarget(this.target) || this.pos);
     this.game.onScoop('pour', this);
     const order = this.heap.items.slice().sort((a, b) => b.pos.z + b.pos.y * 0.4 - (a.pos.z + a.pos.y * 0.4));
     order.forEach((it, i) => (it.at = 0.1 + (i / Math.max(1, order.length - 1)) * 0.5 + rand(0, 0.03)));
@@ -377,15 +456,25 @@ export class Scoop {
         const pos = new THREE.Vector3();
         const quat = new THREE.Quaternion();
         _m.decompose(pos, quat, _s);
-        const vel = new THREE.Vector3(fwd.x * 7 + this.vel.x * 0.2 + rand(-2, 2), -14, fwd.z * 7 + this.vel.z * 0.2 + rand(-2, 2));
-        if (g.pieces.list.length < g.pieces.max - 2) g.pieces.spawnWhole(set.prep, { pos, quat, vel, spin: { x: rand(-5, 5), y: rand(-5, 5), z: rand(-5, 5) }, zone: 'tray' });
+        const reach = wholeShape(set.prep, RAPIER).mean * 0.6;
+        let free = true;
+        for (const q of this.recent) if (!q.dead && q.pos.distanceToSquared(pos) < (reach + q.reach) ** 2) free = false;
+        if (!free && this.t < it.at + 1.6) continue;
+        const vel = new THREE.Vector3(fwd.x * 7 + this.vel.x * 0.2 + rand(-1, 1), -22, fwd.z * 7 + this.vel.z * 0.2 + rand(-1, 1));
+        if (g.pieces.list.length < g.pieces.max - 2) {
+          const piece = g.pieces.spawnWhole(set.prep, { pos, quat, vel, spin: { x: rand(-5, 5), y: rand(-5, 5), z: rand(-5, 5) }, zone: 'tray' });
+          piece.reach = reach;
+          this.recent.push(piece);
+          if (this.recent.length > 10) this.recent.shift();
+        }
         this.takeItem(it);
       }
       if (!this.heap.items.length) this.clearHeap();
     }
-    if (this.t > 0.72) this.pitchT = CARRY_PITCH;
+    if (this.t > 0.72 && !this.heap) this.pitchT = CARRY_PITCH;
     if (this.t > 1.0 && !this.heap) {
       this.state = 'idle';
+      this.recent.length = 0;
       g.ui.caption('');
       g.onScoop('idle', this);
     }
@@ -395,6 +484,10 @@ export class Scoop {
     if (this.state === 'off' || !this.bin) return false;
     this.prev.copy(this.pos);
     let moving = false;
+    if (!this.cache.has(this.bin.def.id)) {
+      if (!this.game.wall.busy) this.step(this.bin.def, 4);
+      moving = true;
+    }
     if (this.state === 'dig') {
       this.digStep(dt);
       moving = true;
@@ -404,8 +497,9 @@ export class Scoop {
         moving = true;
       }
       let tgt = null;
-      const follow = this.state === 'carry' || this.state === 'pour' || (!IS_TOUCH && this.hover);
-      if (follow && this.px >= 0) tgt = this.pointerTarget(this.target);
+      const follow = this.state === 'carry' || (!IS_TOUCH && this.hover);
+      if (this.state === 'pour') tgt = this.target.copy(this.pourAt);
+      else if (follow && this.px >= 0) tgt = this.pointerTarget(this.target);
       if (!tgt) tgt = this.restPoint(this.target);
       if (this.pos.distanceToSquared(tgt) > 1e-4) {
         const rate = this.state === 'carry' || this.state === 'pour' ? 18 : 10;

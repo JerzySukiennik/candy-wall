@@ -1,4 +1,4 @@
-// Candy Wall: sample-based audio (real recordings only): one-shots with random variants, per-candy pitch and tone, voice lines with a level meter for lip sync.
+// Candy Wall: sample-based audio (real recordings only, context and samples prepared at boot): one-shots with random variants, per-candy pitch and tone, voice lines with a level meter for lip sync.
 let ctx = null;
 let master = null;
 let enabled = true;
@@ -66,27 +66,29 @@ export const audio = {
   has(name) {
     return !!(buffers[name] && buffers[name].length);
   },
+  init() {
+    if (ctx) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    ctx = new AC();
+    master = ctx.createGain();
+    master.gain.value = enabled ? 0.9 : 0;
+    const comp = ctx.createDynamicsCompressor();
+    comp.threshold.value = -15;
+    comp.ratio.value = 3.2;
+    comp.attack.value = 0.004;
+    comp.release.value = 0.18;
+    master.connect(comp);
+    comp.connect(ctx.destination);
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    meter = new Uint8Array(analyser.fftSize);
+    analyser.connect(master);
+    loadAll();
+  },
   unlock() {
-    if (!ctx) {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return;
-      ctx = new AC();
-      master = ctx.createGain();
-      master.gain.value = enabled ? 0.9 : 0;
-      const comp = ctx.createDynamicsCompressor();
-      comp.threshold.value = -15;
-      comp.ratio.value = 3.2;
-      comp.attack.value = 0.004;
-      comp.release.value = 0.18;
-      master.connect(comp);
-      comp.connect(ctx.destination);
-      analyser = ctx.createAnalyser();
-      analyser.fftSize = 512;
-      meter = new Uint8Array(analyser.fftSize);
-      analyser.connect(master);
-      loadAll();
-    }
-    if (ctx.state === 'suspended') ctx.resume();
+    if (!ctx) this.init();
+    if (ctx && ctx.state !== 'running') ctx.resume();
   },
   setEnabled(on) {
     enabled = on;

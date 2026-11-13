@@ -1,4 +1,4 @@
-// Candy Wall: dynamic candy pieces (rigid body + meshes), squash and wobble, cutting, snapping, shattering and liquid cores.
+// Candy Wall: dynamic candy pieces (rigid body + meshes), squash and wobble, settling damping so piles fall asleep, cutting, snapping, shattering and liquid cores.
 import * as THREE from 'three';
 import { GROUP, RAPIER } from './physics.js';
 import { buildMeshes, disposeMeshes, measureSet, setParts, splitSet, wholeSet } from './candy.js';
@@ -18,6 +18,7 @@ const _one = new THREE.Vector3(1, 1, 1);
 const UP = new THREE.Vector3(0, 1, 0);
 const MAX_PIECES = IS_TOUCH ? 300 : 560;
 const _w = new THREE.Matrix4();
+const WHITE = new THREE.Color(1, 1, 1);
 
 function deform(out, a, s, ext) {
   const b = 1 / Math.sqrt(Math.max(0.2, s));
@@ -57,6 +58,9 @@ export class Piece {
     this.sExt = 0;
     this.sForce = false;
     this.prevV = new THREE.Vector3();
+    this.calm = 0;
+    this.still = 0;
+    this.calmed = false;
     this.pos = new THREE.Vector3().copy(o.pos);
     this.quat = new THREE.Quaternion().copy(o.quat || _q.identity());
     this.batched = !!set.whole;
@@ -74,7 +78,7 @@ export class Piece {
       .setRotation(this.quat)
       .setLinearDamping(0.25 + feel.sticky * 0.6)
       .setAngularDamping(0.7 + this.soft * 1.4 + feel.sticky)
-      .setCcdEnabled(true);
+      .setSoftCcdPrediction(1.2);
     if (o.vel) bd.setLinvel(o.vel.x, o.vel.y, o.vel.z);
     if (o.spin) bd.setAngvel(o.spin);
     this.body = sys.physics.world.createRigidBody(bd);
@@ -213,6 +217,14 @@ export class Piece {
     return out.copy(v).sub(_a.fromArray(this.center)).applyQuaternion(this.quat).add(this.pos);
   }
 
+  settle(on) {
+    if (this.calmed === on) return;
+    this.calmed = on;
+    const feel = this.prep.feel;
+    this.body.setLinearDamping(on ? 6 : 0.25 + feel.sticky * 0.6);
+    this.body.setAngularDamping(on ? 14 : 0.7 + this.soft * 1.4 + feel.sticky);
+  }
+
   setPinned(on) {
     if (this.pinned === on) return;
     this.pinned = on;
@@ -265,6 +277,7 @@ export class Pieces {
       im.castShadow = true;
       im.receiveShadow = true;
       im.count = 0;
+      for (let i = 0; i < cap; i++) im.setColorAt(i, WHITE);
       if (l.material.transparent) im.renderOrder = 2;
       scene.add(im);
       return im;
@@ -385,6 +398,18 @@ export class Pieces {
       const dy = v.y - p.prevV.y;
       const dz = v.z - p.prevV.z;
       const dv = Math.hypot(dx, dy, dz);
+      const w = p.body.angvel();
+      const v2 = v.x * v.x + v.y * v.y + v.z * v.z;
+      const w2 = w.x * w.x + w.y * w.y + w.z * w.z;
+      if (v2 < 36 && w2 < 9) {
+        if (++p.calm === 20) p.settle(true);
+      } else {
+        p.calm = 0;
+        if (p.calmed && (v2 > 144 || w2 > 36)) p.settle(false);
+      }
+      if (v2 < 9 && w2 < 0.16) {
+        if (++p.still > 16 && !p.liquidActive) p.body.sleep();
+      } else p.still = 0;
       if (dv > 34 && p.quiet <= 0) {
         const strength = clamp(dv / 260, 0.05, 1);
         p.quiet = 0.09;

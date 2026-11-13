@@ -175,9 +175,12 @@ export class Tools {
     this.state = 'hold';
     p.held = true;
     p.relax();
+    p.calm = 0;
+    p.calmed = false;
     p.body.setGravityScale(0, true);
     p.body.setLinearDamping(2);
     p.body.setAngularDamping(6);
+    p.body.enableCcd(true);
     const right = _a.set(1, 0, 0).applyQuaternion(g.stage.camera.quaternion);
     right.y = 0;
     this.pinch.copy(right.normalize());
@@ -199,6 +202,7 @@ export class Tools {
     p.held = false;
     p.relax();
     p.body.setGravityScale(1, true);
+    p.body.enableCcd(false);
     p.body.setLinearDamping(0.25 + p.prep.feel.sticky * 0.6);
     p.body.setAngularDamping(0.7 + p.soft * 1.4 + p.prep.feel.sticky);
     if (tryEat && g.canEat(p)) g.eat(p);

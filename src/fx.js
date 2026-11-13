@@ -49,6 +49,10 @@ export class Fx {
     }
     this.puddleGeo = new THREE.LatheGeometry(prof, 28);
     this.puddles = [];
+    const proto = new THREE.Mesh(this.puddleGeo, new THREE.MeshPhysicalMaterial({ roughness: 0.04, clearcoat: 1, clearcoatRoughness: 0.03, transparent: true, opacity: 0.9, emissive: 0xffffff, emissiveIntensity: 0.6 }));
+    proto.scale.setScalar(0.001);
+    proto.visible = false;
+    scene.add(proto);
 
     const n = MAX_PUFFS;
     const g = new THREE.BufferGeometry();

@@ -1,4 +1,4 @@
-// Candy Wall: picks a cheap physics shape for a whole candy (ball, capsule, cylinder or convex hull).
+// Candy Wall: picks a cheap physics shape for a whole candy (ball, capsule, cylinder, rounded box or convex hull).
 import { hullPoints } from './lib/cut.js';
 import { measureSet, wholeSet } from './candy.js';
 
@@ -39,6 +39,10 @@ export function wholeShape(prep, RAPIER) {
     const hh = c / 2;
     const br = Math.min(hh * 0.7, r * 0.3, 0.3);
     make = () => RAPIER.ColliderDesc.roundCylinder(Math.max(0.01, hh - br), Math.max(0.01, r - br), br).setTranslation(off[0], off[1], off[2]).setRotation(turn(ic));
+  } else if (plain && vol / (a * b * c) > 0.5) {
+    kind = 'box';
+    const br = Math.min(c * 0.22, 0.22);
+    make = () => RAPIER.ColliderDesc.roundCuboid(Math.max(0.02, d[0] / 2 - br), Math.max(0.02, d[1] / 2 - br), Math.max(0.02, d[2] / 2 - br), br).setTranslation(off[0], off[1], off[2]);
   } else {
     const soups = set.soups.filter(Boolean);
     for (const ai of set.attach) {

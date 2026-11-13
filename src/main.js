@@ -1,4 +1,4 @@
-// Candy Wall: game flow (wall, bin focus with the scoop, table), pointer routing, feeding, sounds and the render loop.
+// Candy Wall: game flow (wall, bin focus with the scoop, table), pointer routing, feeding, sounds, background warm-up and the on-demand render loop (with a slow heartbeat that keeps the discrete GPU awake).
 import * as THREE from 'three';
 import { BIN, IS_TOUCH, PARAMS, TABLE, TEST, WALL } from './config.js';
 import { Stage } from './stage.js';
@@ -16,6 +16,7 @@ import { prepare } from './candy.js';
 import { Tweens, clamp, damp, ease, lerp, rand, rayY, smooth } from './util.js';
 
 const $ = (id) => document.getElementById(id);
+audio.init();
 const canvas = $('c');
 const stage = new Stage(canvas);
 const { scene, camera } = stage;
@@ -111,6 +112,21 @@ game.onScoop = (what, sc) => {
   if (what === 'dig') stage.setRig({ t: [b.x, b.y + 9.5, WALL.z + 11], w: p ? 24 : 32, h: p ? 34 : 25, elev: 30, fov: 28 }, 0.55);
   else if (what === 'pour') stage.setRig({ t: [sc.pos.x * 0.6 + b.x * 0.4, tray.group.position.y + 2, sc.pos.z - 4], w: p ? 28 : 38, h: p ? 40 : 30, elev: 46, fov: 28 }, 0.5);
   else stage.setRig(focusRig(b), what === 'carry' ? 0.7 : 0.9);
+};
+
+const WHITE = new THREE.Color(1, 1, 1);
+game.onWarm = (def) => {
+  const g = new THREE.Group();
+  for (let v = 0; v < (def.variants || 1); v++)
+    for (const l of prepare(def, v).layers) {
+      const mats = [...new Set([l.material, l.cap, l.cavity].filter(Boolean))];
+      g.add(new THREE.Mesh(l.geometry, mats.length > 1 ? mats : mats[0]));
+      const im = new THREE.InstancedMesh(l.geometry, l.material, 1);
+      im.setColorAt(0, WHITE);
+      g.add(im);
+      for (const m of mats) for (const key of ['map', 'normalMap', 'roughnessMap']) if (m[key]) stage.renderer.initTexture(m[key]);
+    }
+  stage.precompile(g);
 };
 
 function dockOffset() {
@@ -628,6 +644,9 @@ window.addEventListener('resize', () => {
 let last = performance.now();
 let loadDone = false;
 let idle = 0;
+let quiet = 0;
+let warmAt = 0;
+let drawn = 0;
 function frame(now) {
   requestAnimationFrame(frame);
   const dt = Math.min(0.05, (now - last) / 1000);
@@ -643,6 +662,11 @@ function frame(now) {
   if (!loadDone) {
     $('load').firstElementChild.style.width = (wall.loaded * 100).toFixed(0) + '%';
     if (wall.loaded >= 1) {
+      const pile = wall.bins.find((b) => b.sets[0]);
+      const im = pile && pile.sets[0].meshes[0];
+      if (im) im.castShadow = true;
+      stage.prewarm(scene);
+      if (im) im.castShadow = false;
       loadDone = true;
       $('load').classList.add('done');
       if (window.T) window.T.ready = true;
@@ -696,11 +720,18 @@ function frame(now) {
   }
   if (active) {
     idle = 0;
+    quiet = 0;
+    drawn = now;
     stage.render();
-  } else if (idle < 2) {
+    return;
+  }
+  if (idle < 2 || now - drawn > 2500) {
     idle++;
+    drawn = now;
     stage.render();
   }
+  quiet += dt;
+  if (loadDone && !ptr && quiet > 0.25 && warmAt < CANDIES.length && scoop.step(CANDIES[warmAt], 5)) warmAt++;
 }
 
 await Promise.all([head.load(L.head).catch((e) => console.error('[head] load failed', e)), stage.loadEnv('assets/env/studio.hdr', 2.2, 0.75).catch((e) => console.error('[env] load failed', e))]);

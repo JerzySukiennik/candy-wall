@@ -15,9 +15,11 @@ Every sweet has its own hardness, bounce, stickiness, break behaviour, filling, 
 - three.js r169 and Rapier (both vendored in `vendor/`), ES modules, no build step.
 - All 48 sweets are hand-scripted procedural models (`src/candies/`): signed-distance fields meshed with surface nets, custom materials with fake translucency, sugar crystals and 3D patterns that survive cutting.
 - Cutting is real geometry: every body is a watertight mesh split by a plane, with caps triangulated per layer (`src/lib/cut.js`), so fillings, wafer layers and jawbreaker rings show up wherever you cut.
-- The piles in the bins are instanced meshes; the bin you step up to switches to full-detail models with shadows. Piles can be baked offline with real physics (`bake.html`, results in `assets/piles/`), otherwise a loose packing is generated at load. The heap in the scoop is settled by a small physics simulation, and poured pieces become real physics bodies drawn in instanced batches.
-- Lighting uses a studio HDRI plus shadow-casting key light; desktop adds a light bloom.
-- The loop renders only while something is moving.
+- The piles in the bins are instanced meshes; the bin you step up to switches to full-detail models with shadows. Piles can be baked offline with real physics (`bake.html`, results in `assets/piles/`), otherwise a loose packing is generated at load. The heap in the scoop is settled by a small physics simulation, and poured pieces leave the lip one after another as real physics bodies drawn in instanced batches.
+- Lighting uses a studio HDRI plus a shadow-casting key light. A light bloom is available with `?bloom=1`.
+- The loop renders only while something is moving, plus one frame every 2.5 s so a dual-GPU laptop does not hand the discrete GPU back and stall on the next move.
+- Nothing heavy runs in a single frame: the scoop heap simulation, close-up models and cut-surface shaders are prepared in small slices, ahead of time while the game is idle.
+- Physics colliders are deliberately simple. The tray is built from boxes only, sweets use balls, capsules, cylinders, rounded boxes or small convex hulls, and settled piles are put to sleep early.
 
 ## Development
 

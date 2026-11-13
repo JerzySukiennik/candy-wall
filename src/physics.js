@@ -1,4 +1,4 @@
-// Candy Wall: Rapier world wrapper (centimetre units), static scenery colliders and ray queries.
+// Candy Wall: Rapier world wrapper (centimetre units, time-capped stepping that halves the rate under load), static scenery colliders and ray queries.
 import RAPIER from '../vendor/rapier/rapier.es.js';
 
 export { RAPIER };
@@ -19,6 +19,8 @@ export class Physics {
     if ('lengthUnit' in ip) ip.lengthUnit = 20;
     if ('numSolverIterations' in ip) ip.numSolverIterations = 6;
     this.acc = 0;
+    this.cost = 0;
+    this.coarse = false;
     this.byCollider = new Map();
     this.ray = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 });
   }
@@ -34,12 +36,23 @@ export class Physics {
 
   step(dt, before) {
     this.acc = Math.min(this.acc + dt, STEP * 5);
+    if (this.coarse ? this.cost < 2.2 : this.cost > 4.5) this.coarse = !this.coarse;
+    const h = this.coarse ? STEP * 2 : STEP;
+    this.world.timestep = h;
+    const t0 = performance.now();
     let n = 0;
-    while (this.acc >= STEP) {
-      if (before) before(STEP);
+    while (this.acc >= h) {
+      if (before) before(h);
+      const a = performance.now();
       this.world.step();
-      this.acc -= STEP;
+      const now = performance.now();
+      this.cost += (now - a - this.cost) * 0.25;
+      this.acc -= h;
       n++;
+      if (now - t0 > 9) {
+        this.acc = 0;
+        break;
+      }
     }
     return n;
   }

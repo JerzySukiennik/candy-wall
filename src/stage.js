@@ -49,7 +49,7 @@ export class Stage {
     this.scene.add(fill);
 
     this.composer = null;
-    if (!IS_TOUCH && PARAMS.get('bloom') !== '0') {
+    if (PARAMS.get('bloom') === '1') {
       const rt = new THREE.WebGLRenderTarget(4, 4, { type: THREE.HalfFloatType, samples: 4 });
       const c = (this.composer = new EffectComposer(r, rt));
       c.addPass(new RenderPass(this.scene, this.camera));
@@ -199,7 +199,7 @@ export class Stage {
     const h = window.innerHeight;
     this.w = w;
     this.h = h;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, IS_TOUCH ? 2 : 1.75));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, +PARAMS.get('pr') || (IS_TOUCH ? 2 : 1.5)));
     this.renderer.setSize(w, h, false);
     if (this.composer) {
       this.composer.setPixelRatio(this.renderer.getPixelRatio());
@@ -225,5 +225,32 @@ export class Stage {
   render() {
     if (this.composer) this.composer.render();
     else this.renderer.render(this.scene, this.camera);
+  }
+
+  precompile(object) {
+    if (this.composer) return;
+    this.renderer.compileAsync(object, this.camera, this.scene).catch(() => {});
+  }
+
+  prewarm(root) {
+    const r = this.renderer;
+    const hidden = [];
+    const culled = [];
+    root.traverse((o) => {
+      if (!o.visible) {
+        o.visible = true;
+        hidden.push(o);
+      }
+      if (o.frustumCulled && (o.isMesh || o.isPoints || o.isLine)) {
+        o.frustumCulled = false;
+        culled.push(o);
+      }
+    });
+    r.setScissorTest(true);
+    r.setScissor(0, 0, 1, 1);
+    this.render();
+    r.setScissorTest(false);
+    for (const o of hidden) o.visible = false;
+    for (const o of culled) o.frustumCulled = true;
   }
 }
