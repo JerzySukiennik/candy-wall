@@ -1,0 +1,305 @@
+{
+ "sfx": {
+  "lever": [
+   "lever1.mp3",
+   "lever2.mp3",
+   "lever3.mp3"
+  ],
+  "pour_candy": [
+   "pour_candy1.mp3",
+   "pour_candy2.mp3",
+   "pour_candy3.mp3",
+   "pour_candy4.mp3",
+   "pour_candy5.mp3"
+  ],
+  "land_soft": [
+   "land_soft1.mp3",
+   "land_soft2.mp3",
+   "land_soft3.mp3"
+  ],
+  "land_rubber": [
+   "land_rubber1.mp3",
+   "land_rubber2.mp3",
+   "land_rubber3.mp3",
+   "land_rubber4.mp3"
+  ],
+  "land_foam": [
+   "land_foam1.mp3",
+   "land_foam2.mp3",
+   "land_foam3.mp3"
+  ],
+  "land_hard": [
+   "land_hard1.mp3",
+   "land_hard2.mp3",
+   "land_hard3.mp3"
+  ],
+  "land_glass": [
+   "land_glass1.mp3",
+   "land_glass2.mp3"
+  ],
+  "land_choc": [
+   "land_choc1.mp3",
+   "land_choc2.mp3",
+   "land_choc3.mp3"
+  ],
+  "land_crisp": [
+   "land_crisp1.mp3",
+   "land_crisp2.mp3",
+   "land_crisp3.mp3",
+   "land_crisp4.mp3",
+   "land_crisp5.mp3"
+  ],
+  "land_tiny": [
+   "land_tiny1.mp3",
+   "land_tiny2.mp3",
+   "land_tiny3.mp3",
+   "land_tiny4.mp3"
+  ],
+  "land_stick": [
+   "land_stick1.mp3",
+   "land_stick2.mp3",
+   "land_stick3.mp3"
+  ],
+  "tray_set": [
+   "tray_set1.mp3",
+   "tray_set2.mp3",
+   "tray_set3.mp3"
+  ],
+  "chopsticks": [
+   "chopsticks1.mp3",
+   "chopsticks2.mp3",
+   "chopsticks3.mp3",
+   "chopsticks4.mp3",
+   "chopsticks5.mp3"
+  ],
+  "knife_pick": [
+   "knife_pick1.mp3",
+   "knife_pick2.mp3"
+  ],
+  "knife_board": [
+   "knife_board1.mp3",
+   "knife_board2.mp3",
+   "knife_board3.mp3",
+   "knife_board4.mp3"
+  ],
+  "cut_squeak": [
+   "cut_squeak1.mp3",
+   "cut_squeak2.mp3",
+   "cut_squeak3.mp3",
+   "cut_squeak4.mp3",
+   "cut_squeak5.mp3",
+   "cut_squeak6.mp3"
+  ],
+  "cut_squish": [
+   "cut_squish1.mp3",
+   "cut_squish2.mp3",
+   "cut_squish3.mp3",
+   "cut_squish4.mp3",
+   "cut_squish5.mp3"
+  ],
+  "cut_foam": [
+   "cut_foam1.mp3",
+   "cut_foam2.mp3",
+   "cut_foam3.mp3",
+   "cut_foam4.mp3"
+  ],
+  "cut_crunch": [
+   "cut_crunch1.mp3",
+   "cut_crunch2.mp3",
+   "cut_crunch3.mp3",
+   "cut_crunch4.mp3",
+   "cut_crunch5.mp3"
+  ],
+  "slice": [
+   "slice1.mp3",
+   "slice2.mp3",
+   "slice3.mp3"
+  ],
+  "snap": [
+   "snap1.mp3",
+   "snap2.mp3",
+   "snap3.mp3",
+   "snap4.mp3",
+   "snap5.mp3"
+  ],
+  "crack": [
+   "crack1.mp3",
+   "crack2.mp3",
+   "crack3.mp3",
+   "crack4.mp3"
+  ],
+  "shatter": [
+   "shatter1.mp3",
+   "shatter2.mp3",
+   "shatter3.mp3",
+   "shatter4.mp3"
+  ],
+  "crumble": [
+   "crumble1.mp3",
+   "crumble2.mp3",
+   "crumble3.mp3",
+   "crumble4.mp3",
+   "crumble5.mp3"
+  ],
+  "squish": [
+   "squish1.mp3",
+   "squish2.mp3",
+   "squish3.mp3",
+   "squish4.mp3",
+   "squish5.mp3"
+  ],
+  "drip": [
+   "drip1.mp3",
+   "drip2.mp3",
+   "drip3.mp3",
+   "drip4.mp3"
+  ],
+  "squirt": [
+   "squirt1.mp3",
+   "squirt2.mp3",
+   "squirt3.mp3"
+  ],
+  "goo": [
+   "goo1.mp3",
+   "goo2.mp3",
+   "goo3.mp3",
+   "goo4.mp3",
+   "goo5.mp3"
+  ],
+  "bite_chewy": [
+   "bite_chewy1.mp3",
+   "bite_chewy2.mp3",
+   "bite_chewy3.mp3",
+   "bite_chewy4.mp3",
+   "bite_chewy5.mp3",
+   "bite_chewy6.mp3"
+  ],
+  "bite_soft": [
+   "bite_soft1.mp3",
+   "bite_soft2.mp3",
+   "bite_soft3.mp3",
+   "bite_soft4.mp3"
+  ],
+  "bite_gooey": [
+   "bite_gooey1.mp3",
+   "bite_gooey2.mp3",
+   "bite_gooey3.mp3",
+   "bite_gooey4.mp3",
+   "bite_gooey5.mp3"
+  ],
+  "bite_crunch": [
+   "bite_crunch1.mp3",
+   "bite_crunch2.mp3",
+   "bite_crunch3.mp3",
+   "bite_crunch4.mp3",
+   "bite_crunch5.mp3",
+   "bite_crunch6.mp3"
+  ],
+  "bite_crack": [
+   "bite_crack1.mp3",
+   "bite_crack2.mp3",
+   "bite_crack3.mp3",
+   "bite_crack4.mp3"
+  ],
+  "bite_crisp": [
+   "bite_crisp1.mp3",
+   "bite_crisp2.mp3",
+   "bite_crisp3.mp3",
+   "bite_crisp4.mp3",
+   "bite_crisp5.mp3"
+  ],
+  "bite_snap": [
+   "bite_snap1.mp3",
+   "bite_snap2.mp3",
+   "bite_snap3.mp3",
+   "bite_snap4.mp3",
+   "bite_snap5.mp3"
+  ],
+  "fizz": [
+   "fizz1.mp3",
+   "fizz2.mp3",
+   "fizz3.mp3"
+  ],
+  "gulp": [
+   "gulp1.mp3",
+   "gulp2.mp3",
+   "gulp3.mp3"
+  ],
+  "lip_smack": [
+   "lip_smack1.mp3",
+   "lip_smack2.mp3",
+   "lip_smack3.mp3",
+   "lip_smack4.mp3"
+  ],
+  "sizzle": [
+   "sizzle1.mp3",
+   "sizzle2.mp3"
+  ],
+  "breath_cold": [
+   "breath_cold1.mp3",
+   "breath_cold2.mp3",
+   "breath_cold3.mp3"
+  ],
+  "pant": [
+   "pant1.mp3",
+   "pant2.mp3",
+   "pant3.mp3",
+   "pant4.mp3"
+  ],
+  "whoosh": [
+   "whoosh1.mp3",
+   "whoosh2.mp3"
+  ]
+ },
+ "voice": {
+  "bitter": [
+   "bitter1.mp3",
+   "bitter2.mp3"
+  ],
+  "fizz": [
+   "fizz1.mp3",
+   "fizz2.mp3"
+  ],
+  "hard": [
+   "hard1.mp3",
+   "hard2.mp3"
+  ],
+  "liquid": [
+   "liquid1.mp3",
+   "liquid2.mp3"
+  ],
+  "mint": [
+   "mint1.mp3",
+   "mint2.mp3"
+  ],
+  "more": [
+   "more1.mp3",
+   "more2.mp3",
+   "more3.mp3"
+  ],
+  "salty": [
+   "salty1.mp3",
+   "salty2.mp3"
+  ],
+  "sour": [
+   "sour1.mp3",
+   "sour2.mp3",
+   "sour3.mp3"
+  ],
+  "spicy": [
+   "spicy1.mp3",
+   "spicy2.mp3",
+   "spicy3.mp3"
+  ],
+  "spicy_max": [
+   "spicy_max1.mp3",
+   "spicy_max2.mp3"
+  ],
+  "sweet": [
+   "sweet1.mp3",
+   "sweet2.mp3",
+   "sweet3.mp3",
+   "sweet4.mp3"
+  ]
+ }
+}
